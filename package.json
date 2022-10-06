@@ -21,5 +21,13 @@
   "bugs": {
     "url": "https://github.com/luckstar77/api-stock-dividend-yield/issues"
   },
-  "homepage": "https://github.com/luckstar77/api-stock-dividend-yield#readme"
+  "homepage": "https://github.com/luckstar77/api-stock-dividend-yield#readme",
+  "dependencies": {
+    "express": "^4.18.1",
+    "mongodb": "^4.10.0"
+  },
+  "devDependencies": {
+    "@types/node": "^18.8.2",
+    "eslint": "^8.24.0"
+  }
 }
