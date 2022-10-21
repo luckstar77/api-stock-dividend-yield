@@ -33,13 +33,12 @@ interface Dividend {
 
     app.get('/stock', async function (req, res) {
         const { search } = req.query as {search:string};
-        if(isEmpty(search)) res.send(404);
+        if(isEmpty(search)) return res.sendStatus(404);
         let stock = await mongodbClient.collection(COLLECTION).findOne({
             $or:[{id:search},{name:search}]
         });
         if(isEmpty(stock)) return res.sendStatus(404);
         const {id, name, successRate, updated} = stock;
-        const a = dayjs().isAfter(updated, 'M');
         if(isUndefined(successRate) || dayjs().isAfter(updated, 'M')) {
             // TODO: https://github.com/acornjs/acorn/issues/741
             // eslint-disable-next-line @typescript-eslint/ban-ts-comment
@@ -50,7 +49,7 @@ interface Dividend {
             const allAvgCashYields = parseFloat($('#divDividendSumInfo > div > div > table > tbody > tr:nth-child(4) > td:nth-child(5)').text());
             const allAvgRetroactiveYields = parseFloat($('#divDividendSumInfo > div > div > table > tbody > tr:nth-child(6) > td:nth-child(5)').text());
             if (isNaN(price) || allAvgRetroactiveYields === 0 || isNaN(allAvgRetroactiveYields)) {
-                res.sendStatus(404);
+                return res.sendStatus(404);
             }
 
             let yearText:string;
@@ -84,7 +83,7 @@ interface Dividend {
             const dividendsYears = R.keys(dividends);
             const amountOfDividend = dividendsValues.length;
             if(amountOfDividend === 0) {
-                res.sendStatus(404);
+                return res.sendStatus(404);
             }
 
             const dividendsFailureObject = R.filter(value => {
