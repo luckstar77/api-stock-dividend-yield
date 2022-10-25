@@ -34,6 +34,9 @@
 ## 開發流程
 - sudo service mongodb start
 - sudo service redis-server start
+- npm i -g pm2 typescript
+- tsc
+- pm2 start build/index.js
 
 ## 參考第三方 API
 - 取得GOODINFO網站的股票ID資訊 <https://goodinfo.tw/tw/StockLib/js/TW_STOCK_ID_NM_LIST.js?0>  
@@ -74,3 +77,21 @@ document.querySelector("#tblDetail > tbody > tr:nth-child(5) > td:nth-child(12)"
 - 配股 = 股票股利 x 100
 - 配股價值公式 = 配股 x 除權息參考價
 - 還原殖利率公式 =（現金股利 + 配股價值）÷ 除權息前一日收盤價
+
+## nginx 設定
+sudo vim /etc/nginx/sites-enabled/api.stock.imallenlai.com
+```
+server {
+        listen       80;
+        server_name  api.stock.imallenlai.com;
+        
+      
+        location / {
+            proxy_pass http://127.0.0.1:3000;
+        }
+    }
+```
+
+## 技術文章參考
+- [certbot](https://www.digitalocean.com/community/tutorials/how-to-secure-nginx-with-let-s-encrypt-on-ubuntu-20-04)
+- [nginx](https://andy6804tw.github.io/2022/02/27/nginx-tutorial/)
