@@ -95,3 +95,11 @@ server {
 ## 技術文章參考
 - [certbot](https://www.digitalocean.com/community/tutorials/how-to-secure-nginx-with-let-s-encrypt-on-ubuntu-20-04)
 - [nginx](https://andy6804tw.github.io/2022/02/27/nginx-tutorial/)
+
+## EC2 主機重啟後初始指令
+```
+sudo systemctl start redis-server
+sudo systemctl start mongod
+cd stock-dividend-yield/api-stock-dividend-yield
+pm2 start build/index.js
+```
