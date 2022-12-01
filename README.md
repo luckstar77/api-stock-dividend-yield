@@ -39,7 +39,7 @@
 - pm2 start build/index.js
 
 ## 參考第三方 API
-- 取得GOODINFO網站的股票ID資訊 <https://goodinfo.tw/tw/StockLib/js/TW_STOCK_ID_NM_LIST.js?0>  
+- 取得GOODINFO網站的股票ID資訊 <https://goodinfo.tw/tw/Lib.js/TW_STOCK_ID_NM_LIST.js>  
 ```
 /*檔案更新時間:2022/09/21 06:03:22*/
 var garrTW_LIST_STOCK_ID_NM = []

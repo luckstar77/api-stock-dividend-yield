@@ -12,7 +12,7 @@ import {isEmpty, isUndefined, map, without} from 'lodash';
 const COLLECTION = 'stock';
 const STOCKS = 'STOCKS';
 const STOCK_LIST_UPDATED = 'STOCK_LIST_UPDATED';
-const STOCK_IDS_URL = 'https://goodinfo.tw/tw/StockLib/js/TW_STOCK_ID_NM_LIST.js?0';
+const STOCK_IDS_URL = 'https://goodinfo.tw/tw/Lib.js/TW_STOCK_ID_NM_LIST.js';
 const DIVIDEND_PREFIX_URL = 'https://goodinfo.tw/tw/StockDividendPolicy.asp?STOCK_ID=';
 
 enum DividendState {
