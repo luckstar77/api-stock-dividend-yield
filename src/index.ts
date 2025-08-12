@@ -8,6 +8,7 @@ import { CookieJar } from 'tough-cookie';
 import { wrapper } from 'axios-cookiejar-support';
 import * as acorn from 'acorn';
 import * as cheerio from 'cheerio';
+import * as vm from 'vm';
 import * as R from 'ramda';
 import {isEmpty, isUndefined, map, without} from 'lodash';
 
@@ -47,9 +48,20 @@ interface Dividend {
             const client = wrapper(axios.create({ jar } as any));
             const headers = { 'User-Agent': 'Mozilla/5.0', 'Referer': 'https://goodinfo.tw' };
             await client.get('https://goodinfo.tw', { headers });
-            const {data: dividendText} = await client.get(DIVIDEND_PREFIX_URL + id, { headers });
+            let {data: dividendText} = await client.get(DIVIDEND_PREFIX_URL + id, { headers });
             if(dividendText.includes('初始化中')) {
-                return res.sendStatus(404);
+                const { data: cookieJs } = await client.get('https://goodinfo.tw/Lib.js/Cookie.js', { headers });
+                const { data: initJs } = await client.get('https://goodinfo.tw/Lib.js/Initial.js.asp', { headers });
+                const cookies:string[] = [];
+                const context = { document: { get cookie() { return cookies.join('; '); }, set cookie(v: string) { cookies.push(v); } } } as never;
+                vm.runInNewContext(cookieJs + initJs, context);
+                for (const cookie of cookies) {
+                    await jar.setCookie(cookie, 'https://goodinfo.tw');
+                }
+                ({ data: dividendText } = await client.get(DIVIDEND_PREFIX_URL + id, { headers }));
+                if(dividendText.includes('初始化中')) {
+                    return res.sendStatus(404);
+                }
             }
             const $ = cheerio.load(dividendText);
             const price = parseFloat($('body > table:nth-child(8) > tbody > tr > td:nth-child(3) > table:nth-child(1) > tbody > tr > td:nth-child(1) > table > tbody > tr:nth-child(3) > td:nth-child(1)').text());
