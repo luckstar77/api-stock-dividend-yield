@@ -46,19 +46,25 @@ interface Dividend {
             // TODO: https://github.com/acornjs/acorn/issues/741
             const jar = new CookieJar();
             const client = wrapper(axios.create({ jar } as any));
-            const headers = { 'User-Agent': 'Mozilla/5.0', 'Referer': 'https://goodinfo.tw' };
-            await client.get('https://goodinfo.tw', { headers });
+            const baseUrl = 'https://goodinfo.tw';
+            const twBaseUrl = `${baseUrl}/tw`;
+            const headers = { 'User-Agent': 'Mozilla/5.0', 'Referer': baseUrl };
+            await client.get(twBaseUrl, { headers });
             let {data: dividendText} = await client.get(DIVIDEND_PREFIX_URL + id, { headers });
             if(dividendText.includes('初始化中')) {
-                const { data: cookieJs } = await client.get('https://goodinfo.tw/Lib.js/Cookie.js', { headers });
-                const { data: initJs } = await client.get('https://goodinfo.tw/Lib.js/Initial.js.asp', { headers });
-                const cookies:string[] = [];
-                const context = { document: { get cookie() { return cookies.join('; '); }, set cookie(v: string) { cookies.push(v); } } } as never;
-                vm.runInNewContext(cookieJs + initJs, context);
-                for (const cookie of cookies) {
-                    await jar.setCookie(cookie, 'https://goodinfo.tw');
+                try {
+                    const { data: cookieJs } = await client.get(`${twBaseUrl}/Lib.js/Cookie.js`, { headers });
+                    const { data: initJs } = await client.get(`${twBaseUrl}/Lib.js/Initial.js.asp`, { headers });
+                    const cookies:string[] = [];
+                    const context = { document: { get cookie() { return cookies.join('; '); }, set cookie(v: string) { cookies.push(v); } } } as never;
+                    vm.runInNewContext(cookieJs + initJs, context);
+                    for (const cookie of cookies) {
+                        await jar.setCookie(cookie, baseUrl);
+                    }
+                    ({ data: dividendText } = await client.get(DIVIDEND_PREFIX_URL + id, { headers }));
+                } catch {
+                    return res.sendStatus(404);
                 }
-                ({ data: dividendText } = await client.get(DIVIDEND_PREFIX_URL + id, { headers }));
                 if(dividendText.includes('初始化中')) {
                     return res.sendStatus(404);
                 }
