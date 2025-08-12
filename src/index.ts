@@ -55,8 +55,14 @@ interface Dividend {
                 try {
                     const { data: cookieJs } = await client.get(`${twBaseUrl}/Lib.js/Cookie.js`, { headers });
                     const { data: initJs } = await client.get(`${twBaseUrl}/Lib.js/Initial.js.asp`, { headers });
-                    const cookies:string[] = [];
-                    const context = { document: { get cookie() { return cookies.join('; '); }, set cookie(v: string) { cookies.push(v); } } } as never;
+                    const cookies: string[] = [];
+                    const context: any = {
+                        document: {
+                            get cookie() { return cookies.join('; '); },
+                            set cookie(v: string) { cookies.push(v); }
+                        }
+                    };
+                    context.window = context;
                     vm.runInNewContext(cookieJs + initJs, context);
                     for (const cookie of cookies) {
                         await jar.setCookie(cookie, baseUrl);
