@@ -44,7 +44,7 @@ interface Dividend {
         if(isUndefined(successRate) || dayjs().isAfter(updated, 'M')) {
             // TODO: https://github.com/acornjs/acorn/issues/741
             const jar = new CookieJar();
-            const client = wrapper(axios.create({ jar }));
+            const client = wrapper(axios.create({ jar } as any));
             const headers = { 'User-Agent': 'Mozilla/5.0', 'Referer': 'https://goodinfo.tw' };
             await client.get('https://goodinfo.tw', { headers });
             const {data: dividendText} = await client.get(DIVIDEND_PREFIX_URL + id, { headers });
