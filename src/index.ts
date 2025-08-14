@@ -8,6 +8,7 @@ import * as acorn from 'acorn';
 import * as cheerio from 'cheerio';
 import * as R from 'ramda';
 import {isEmpty, isUndefined, map, without} from 'lodash';
+import puppeteer from 'puppeteer';
 
 const COLLECTION = 'stock';
 const STOCKS = 'STOCKS';
@@ -43,7 +44,14 @@ interface Dividend {
             // TODO: https://github.com/acornjs/acorn/issues/741
             // eslint-disable-next-line @typescript-eslint/ban-ts-comment
             // @ts-ignore
-            const {data: dividendText} = await axios.get(DIVIDEND_PREFIX_URL + id);
+            const browser = await puppeteer.launch({
+                args: ['--no-sandbox', '--disable-setuid-sandbox'],
+                headless: true,
+            });
+            const page = await browser.newPage();
+            await page.goto(DIVIDEND_PREFIX_URL + id, {waitUntil: 'networkidle0'});
+            const dividendText = await page.content();
+            await browser.close();
             const $ = cheerio.load(dividendText);
             const price = parseFloat($('body > table:nth-child(8) > tbody > tr > td:nth-child(3) > table:nth-child(1) > tbody > tr > td:nth-child(1) > table > tbody > tr:nth-child(3) > td:nth-child(1)').text());
             const allAvgCashYields = parseFloat($('#divDividendSumInfo > div > div > table > tbody > tr:nth-child(4) > td:nth-child(5)').text());
