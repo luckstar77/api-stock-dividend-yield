@@ -8,6 +8,7 @@ import * as acorn from 'acorn';
 import * as cheerio from 'cheerio';
 import * as R from 'ramda';
 import {isEmpty, isUndefined, map, without} from 'lodash';
+import puppeteer from 'puppeteer';
 
 const COLLECTION = 'stock';
 const STOCKS = 'STOCKS';
@@ -43,15 +44,42 @@ interface Dividend {
             // TODO: https://github.com/acornjs/acorn/issues/741
             // eslint-disable-next-line @typescript-eslint/ban-ts-comment
             // @ts-ignore
-            const {data: dividendText} = await axios.get(DIVIDEND_PREFIX_URL + id);
-            const $ = cheerio.load(dividendText);
-            const price = parseFloat($('body > table:nth-child(8) > tbody > tr > td:nth-child(3) > table:nth-child(1) > tbody > tr > td:nth-child(1) > table > tbody > tr:nth-child(3) > td:nth-child(1)').text());
-            const allAvgCashYields = parseFloat($('#divDividendSumInfo > div > div > table > tbody > tr:nth-child(4) > td:nth-child(5)').text());
-            const allAvgRetroactiveYields = parseFloat($('#divDividendSumInfo > div > div > table > tbody > tr:nth-child(6) > td:nth-child(5)').text());
+            const browser = await puppeteer.launch({
+                args: ['--no-sandbox', '--disable-setuid-sandbox'],
+                headless: true,
+            });
+            const page = await browser.newPage();
+            await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36');
+            await page.setExtraHTTPHeaders({ 'accept-language': 'zh-TW,zh;q=0.9' });
+            await page.evaluateOnNewDocument(() => {
+                // eslint-disable-next-line @typescript-eslint/no-empty-function
+                Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+            });
+            await page.goto(DIVIDEND_PREFIX_URL + id, { waitUntil: 'domcontentloaded' });
+            try {
+                await page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 5000 });
+            } catch (_e) {
+                // ignore navigation timeout
+            }
+            await page.waitForSelector('#tblDetail');
+            const dividendData = await page.evaluate(() => {
+                const getText = (selector: string) => document.querySelector(selector)?.textContent || '';
+                return {
+                    price: getText('body > table:nth-child(8) > tbody > tr > td:nth-child(3) > table:nth-child(1) > tbody > tr > td:nth-child(1) > table > tbody > tr:nth-child(3) > td:nth-child(1)'),
+                    allAvgCashYields: getText('#divDividendSumInfo > div > div > table > tbody > tr:nth-child(4) > td:nth-child(5)'),
+                    allAvgRetroactiveYields: getText('#divDividendSumInfo > div > div > table > tbody > tr:nth-child(6) > td:nth-child(5)'),
+                    tableHTML: document.querySelector('#tblDetail')?.outerHTML || ''
+                };
+            });
+            await browser.close();
+            const price = parseFloat(dividendData.price);
+            const allAvgCashYields = parseFloat(dividendData.allAvgCashYields);
+            const allAvgRetroactiveYields = parseFloat(dividendData.allAvgRetroactiveYields);
             if (isNaN(price) || allAvgRetroactiveYields === 0 || isNaN(allAvgRetroactiveYields)) {
                 return res.sendStatus(404);
             }
 
+            const $ = cheerio.load(dividendData.tableHTML);
             let yearText:string;
             let year:number;
             const $trs = $('#tblDetail > tbody > tr');
