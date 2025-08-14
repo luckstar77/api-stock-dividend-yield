@@ -8,7 +8,7 @@ import * as acorn from 'acorn';
 import * as cheerio from 'cheerio';
 import * as R from 'ramda';
 import {isEmpty, isUndefined, map, without} from 'lodash';
-import puppeteer from 'puppeteer';
+import puppeteer from 'puppeteer-core';
 
 const COLLECTION = 'stock';
 const STOCKS = 'STOCKS';
@@ -45,8 +45,9 @@ interface Dividend {
             // eslint-disable-next-line @typescript-eslint/ban-ts-comment
             // @ts-ignore
             const browser = await puppeteer.launch({
-                args: ['--no-sandbox', '--disable-setuid-sandbox'],
+                executablePath: '/snap/bin/chromium',
                 headless: true,
+                args: ['--no-sandbox', '--disable-dev-shm-usage']
             });
             const page = await browser.newPage();
             await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36');
