@@ -111,7 +111,7 @@ interface Dividend {
                 dividends[year!].push(dividendState);
             }
             const dividendsValues = R.values(dividends);
-            const dividendsYears = R.keys(dividends).map((y) => parseInt(y, 10));
+            const dividendsYears = R.keys(dividends).map((y) => parseInt(String(y), 10));
             const amountOfDividend = dividendsValues.length;
             if(amountOfDividend === 0) {
                 return res.sendStatus(404);
