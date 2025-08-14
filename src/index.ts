@@ -88,10 +88,13 @@ interface Dividend {
                 let dividendState: DividendState = DividendState.NOTHING; 
                 const $dividendTr = $trs.eq(i);
                 yearText = $dividendTr.children('td').eq(0).text();
-                if(!isNaN(yearText as never)) {
-                    year = parseInt(yearText);
+                const parsedYear = parseInt(yearText, 10);
+                if(!Number.isNaN(parsedYear)) {
+                    year = parsedYear;
                     dividends[year] = [];
-                } else if(yearText !== '∟') continue;
+                } else if(yearText !== '∟') {
+                    continue;
+                }
                 const cashDividendText = $dividendTr.children('td').eq(3).text();
                 const stockDividendText = $dividendTr.children('td').eq(6).text();
                 const cashDividendSpendDaysText = $dividendTr.children('td').eq(10).text();
@@ -108,7 +111,7 @@ interface Dividend {
                 dividends[year!].push(dividendState);
             }
             const dividendsValues = R.values(dividends);
-            const dividendsYears = R.keys(dividends);
+            const dividendsYears = R.keys(dividends).map((y) => parseInt(y, 10));
             const amountOfDividend = dividendsValues.length;
             if(amountOfDividend === 0) {
                 return res.sendStatus(404);
