@@ -4,8 +4,11 @@ import { connect as redisConnect } from './db/redis';
 import cors from 'cors';
 import dayjs from 'dayjs';
 import axios from 'axios';
+import { CookieJar } from 'tough-cookie';
+import { wrapper } from 'axios-cookiejar-support';
 import * as acorn from 'acorn';
 import * as cheerio from 'cheerio';
+import * as vm from 'vm';
 import * as R from 'ramda';
 import {isEmpty, isUndefined, map, without} from 'lodash';
 
@@ -41,9 +44,37 @@ interface Dividend {
         const {id, name, successRate, updated} = stock;
         if(isUndefined(successRate) || dayjs().isAfter(updated, 'M')) {
             // TODO: https://github.com/acornjs/acorn/issues/741
-            // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-            // @ts-ignore
-            const {data: dividendText} = await axios.get(DIVIDEND_PREFIX_URL + id);
+            const jar = new CookieJar();
+            const client = wrapper(axios.create({ jar } as any));
+            const baseUrl = 'https://goodinfo.tw';
+            const twBaseUrl = `${baseUrl}/tw`;
+            const headers = { 'User-Agent': 'Mozilla/5.0', 'Referer': baseUrl };
+            await client.get(twBaseUrl, { headers });
+            let {data: dividendText} = await client.get(DIVIDEND_PREFIX_URL + id, { headers });
+            if(dividendText.includes('初始化中')) {
+                try {
+                    const { data: cookieJs } = await client.get(`${twBaseUrl}/Lib.js/Cookie.js`, { headers });
+                    const { data: initJs } = await client.get(`${twBaseUrl}/Lib.js/Initial.js.asp`, { headers });
+                    const cookies: string[] = [];
+                    const context: any = {
+                        document: {
+                            get cookie() { return cookies.join('; '); },
+                            set cookie(v: string) { cookies.push(v); }
+                        }
+                    };
+                    context.window = context;
+                    vm.runInNewContext(cookieJs + initJs, context);
+                    for (const cookie of cookies) {
+                        await jar.setCookie(cookie, baseUrl);
+                    }
+                    ({ data: dividendText } = await client.get(DIVIDEND_PREFIX_URL + id, { headers }));
+                } catch {
+                    return res.sendStatus(404);
+                }
+                if(dividendText.includes('初始化中')) {
+                    return res.sendStatus(404);
+                }
+            }
             const $ = cheerio.load(dividendText);
             const price = parseFloat($('body > table:nth-child(8) > tbody > tr > td:nth-child(3) > table:nth-child(1) > tbody > tr > td:nth-child(1) > table > tbody > tr:nth-child(3) > td:nth-child(1)').text());
             const allAvgCashYields = parseFloat($('#divDividendSumInfo > div > div > table > tbody > tr:nth-child(4) > td:nth-child(5)').text());
