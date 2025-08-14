@@ -49,19 +49,39 @@ interface Dividend {
                 headless: true,
             });
             const page = await browser.newPage();
-            await page.goto(DIVIDEND_PREFIX_URL + id, {waitUntil: 'networkidle0'});
-            const dividendText = await page.content();
+            await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36');
+            await page.setExtraHTTPHeaders({ 'accept-language': 'zh-TW,zh;q=0.9' });
+            await page.evaluateOnNewDocument(() => {
+                // eslint-disable-next-line @typescript-eslint/no-empty-function
+                Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+            });
+            await page.goto(DIVIDEND_PREFIX_URL + id, { waitUntil: 'domcontentloaded' });
+            try {
+                await page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 5000 });
+            } catch (_e) {
+                // ignore navigation timeout
+            }
+            await page.waitForSelector('body');
+            const dividendData = await page.evaluate(() => {
+                const getText = (selector: string) => document.querySelector(selector)?.textContent || '';
+                return {
+                    price: getText('body > table:nth-child(9) > tbody > tr:nth-child(2) > td:nth-child(3) > main > table > tbody > tr > td:nth-child(1) > section > table > tbody > tr:nth-child(3) > td:nth-child(1)'),
+                    allAvgCashYields: getText('#divDividendSumInfo > section > div > table > tbody > tr:nth-child(4) > td:nth-child(5)'),
+                    allAvgRetroactiveYields: getText('#divDividendSumInfo > section > div > table > tbody > tr:nth-child(6) > td:nth-child(5)'),
+                    tableHTML: document.querySelector('body')?.outerHTML || ''
+                };
+            });
             await browser.close();
-            const $ = cheerio.load(dividendText);
-            const price = parseFloat($('body > table:nth-child(8) > tbody > tr > td:nth-child(3) > table:nth-child(1) > tbody > tr > td:nth-child(1) > table > tbody > tr:nth-child(3) > td:nth-child(1)').text());
-            const allAvgCashYields = parseFloat($('#divDividendSumInfo > div > div > table > tbody > tr:nth-child(4) > td:nth-child(5)').text());
-            const allAvgRetroactiveYields = parseFloat($('#divDividendSumInfo > div > div > table > tbody > tr:nth-child(6) > td:nth-child(5)').text());
+            const price = parseFloat(dividendData.price);
+            const allAvgCashYields = parseFloat(dividendData.allAvgCashYields);
+            const allAvgRetroactiveYields = parseFloat(dividendData.allAvgRetroactiveYields);
             if (isNaN(price) || allAvgRetroactiveYields === 0 || isNaN(allAvgRetroactiveYields)) {
                 return res.sendStatus(404);
             }
 
             let yearText:string;
             let year:number;
+            const $ = cheerio.load(dividendData.tableHTML);
             const $trs = $('#tblDetail > tbody > tr');
             const dividends: Dividend = {};
             for(let i = 4; i < $trs.length - 1; i++) {
