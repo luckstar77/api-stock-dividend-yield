@@ -4,7 +4,7 @@
   "description": "提供股票的API查詢資料，例如:填權息成功率、除權息次數、填權息次數、統計年分、歷年平均現金殖利率、歷年平均還原殖利率。資料來自證交所與櫃買中心的開放資料",
   "main": "index.js",
   "scripts": {
-    "start": "ts-node src/index.ts",
+    "start": "node build/index.js",
     "build": "tsc",
     "sync": "node build/sync.js",
     "test": "tsc && node --test $(find build -name '*.test.js')"
@@ -38,6 +38,7 @@
     "@types/node": "^18.8.2",
     "@typescript-eslint/eslint-plugin": "^5.39.0",
     "@typescript-eslint/parser": "^5.39.0",
-    "eslint": "^8.24.0"
+    "eslint": "^8.24.0",
+    "typescript": "^5.9.2"
   }
 }

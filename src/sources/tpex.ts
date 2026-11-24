@@ -31,7 +31,10 @@ function readFirstTable(json: unknown, expectedDate: string, page: string): Tpex
     const response = json as TpexResponse;
     if(String(response.stat ?? '').toLowerCase() !== STAT_OK) throw new SourceFormatError(`${page} answered "${response.stat}"`);
     if(response.date !== expectedDate) throw new SourceFormatError(`${page} answered for ${response.date} instead of ${expectedDate}`);
-    return response.tables?.[0] ?? {};
+    if(!Array.isArray(response.tables)) throw new SourceFormatError(`${page} answered without tables`);
+    // A day without trading comes back as one table with no rows (older days: no table at all).
+    // build/sync.js compares with the TWSE answer to tell that apart from a missing day.
+    return response.tables[0] ?? {};
 }
 
 /** 除權除息計算結果表 */
@@ -46,8 +49,13 @@ export function parseTpexEvents(json: unknown, start: string, end: string): Divi
         const referencePrice = parseNumber(read(row, '除權息參考價'));
         const cashDividend = parseNumber(read(row, '息值'));
         const sharesPerThousand = parseNumber(read(row, '每仟股無償配股'));
-        const kind = EVENT_KINDS[String(read(row, '權/息')).trim()];
-        if(!date || !preExClose || referencePrice === undefined || cashDividend === undefined || sharesPerThousand === undefined || !kind) continue;
+        const kindText = String(read(row, '權/息')).trim();
+        const kind = EVENT_KINDS[kindText];
+        if(!kind) throw new SourceFormatError(`exDailyQ has an unknown kind "${kindText}"`);
+        if(!date || !preExClose || referencePrice === undefined || cashDividend === undefined || sharesPerThousand === undefined) {
+            console.warn(`[sync] skipping an exDailyQ row without a date, prices or amounts: ${JSON.stringify(row.slice(0, 9))}`);
+            continue;
+        }
         events.push({
             market: 'tpex',
             id: String(read(row, '代號')).trim(),

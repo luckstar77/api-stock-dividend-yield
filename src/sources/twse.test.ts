@@ -32,13 +32,20 @@ describe('parseTwseEvents', () => {
         ]);
     });
 
-    it('works out the shares from the prices for 2004 and 2005, which have no detail page', () => {
+    it('keeps an estimate from the table\'s cash column for ex-dates that may have no detail page', () => {
         const inputResponse = { stat: 'OK', fields: OLD_EVENT_FIELDS, data: [['94年01月11日', '6280', '崇貿', '33.00', '27.48', 5.52, 0.0, '5.520000', '權']] };
 
         const [actual] = parseTwseEvents(inputResponse);
 
-        assert.equal(actual.cashDividend, 0);
-        assert.equal(actual.stockDividendPerShare, 0.200873);
+        assert.equal(actual.cashDividend, null);
+        assert.equal(actual.stockDividendPerShare, null);
+        assert.deepEqual(actual.estimatedAmount, { cashDividend: 0, stockDividendPerShare: 0.200873 });
+    });
+
+    it('throws on a kind it does not know, instead of dropping the row', () => {
+        const inputResponse = { stat: 'OK', fields: CURRENT_EVENT_FIELDS, data: [['113年01月04日', '2454', '聯發科', '953.00', '928.40', '24.600000', '除息', '', '', '', '', '']] };
+
+        assert.throws(() => parseTwseEvents(inputResponse), SourceFormatError);
     });
 
     it('returns nothing for a period without ex-dates and throws on any other answer', () => {
@@ -63,8 +70,15 @@ describe('parseTwseDetail', () => {
         assert.deepEqual(actual, { cashDividend: 0, stockDividendPerShare: 0 });
     });
 
-    it('returns undefined when the page has no data', () => {
-        assert.equal(parseTwseDetail({ stat: '無相關資料' }), undefined);
+    it('returns null only when the page says it has no data', () => {
+        assert.equal(parseTwseDetail({ stat: '無相關資料' }), null);
+    });
+
+    it('throws on any other answer, so an error page is not saved as a zero dividend', () => {
+        assert.throws(() => parseTwseDetail({ stat: '查詢過於頻繁，請稍後再試' }), SourceFormatError);
+        assert.throws(() => parseTwseDetail({ stat: 'ok', fields: ['股票代號', '股票名稱'], data: [['2454', '聯發科']] }), SourceFormatError);
+        assert.throws(() => parseTwseDetail({ stat: 'ok', fields: DETAIL_FIELDS, data: [] }), SourceFormatError);
+        assert.throws(() => parseTwseDetail({ stat: 'ok', fields: DETAIL_FIELDS, data: [['2454', '聯發科', '另行公告', '', '0 股', '0 股', '0 股']] }), SourceFormatError);
     });
 });
 

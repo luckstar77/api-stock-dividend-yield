@@ -53,6 +53,11 @@ describe('parseTpexCloses', () => {
 
     it('returns null on a day without trading', () => {
         assert.equal(parseTpexCloses({ stat: 'ok', date: '20240210', tables: [{ fields: CLOSE_FIELDS, data: [] }] }, '2024-02-10'), null);
+        assert.equal(parseTpexCloses({ stat: 'ok', date: '20040211', tables: [] }, '2004-02-11'), null);
+    });
+
+    it('throws when the answer has no tables at all', () => {
+        assert.throws(() => parseTpexCloses({ stat: 'ok', date: '20240102' }, '2024-01-02'), SourceFormatError);
     });
 
     it('throws when the answer is for another day', () => {

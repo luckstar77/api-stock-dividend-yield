@@ -1,4 +1,4 @@
-import { DividendEvent, EventKind, sharesPerShare } from '../dividend/summary';
+import { DividendAmount, DividendEvent, EventKind, sharesPerShare } from '../dividend/summary';
 import { hasColumn, makeRowReader, parseAmount, parseNumber, parseRocDate, SourceFormatError, toCompactDate } from './format';
 import { RateLimitedClient } from './rate-limited-client';
 
@@ -7,14 +7,14 @@ import { RateLimitedClient } from './rate-limited-client';
 const BASE_URL = 'https://www.twse.com.tw/rwd/zh';
 const STAT_OK = 'ok';
 const STAT_NO_DATA = '很抱歉，沒有符合條件的資料!';
+/** What the detail page answers for an ex-date it has no data for */
+const STAT_NO_DETAIL = '無相關資料';
 const CLOSES_TABLE_TITLE = '每日收盤行情';
 const CASH_DIVIDEND_COLUMN = '現金股利';
 const FREE_SHARES_COLUMN = '每千股無償配股';
 const EVENT_KINDS: Record<string, EventKind> = { '息': 'cash', '權': 'stock', '權息': 'both' };
 const EVENT_COLUMNS = ['資料日期', '股票代號', '股票名稱', '除權息前收盤價', '除權息參考價', '權值+息值', '權/息'] as const;
 const CLOSE_COLUMNS = ['證券代號', '證券名稱', '收盤價'] as const;
-/** Tables from 2006 on link every ex-date to a detail page; 2004 and 2005 have none. */
-const DETAIL_COLUMN = '詳細資料';
 /** Tables up to 2008 also give the cash dividend in a column of its own. */
 const CASH_COLUMN = '息值';
 const AMOUNT_DECIMALS = 6;
@@ -36,11 +36,6 @@ export interface StockClose {
     close: number;
 }
 
-export interface DividendAmount {
-    cashDividend: number;
-    stockDividendPerShare: number;
-}
-
 function asResponse(json: unknown): TwseResponse {
     if(typeof json !== 'object' || json === null) throw new SourceFormatError('the answer is not an object');
     return json as TwseResponse;
@@ -52,8 +47,7 @@ function isStat(response: TwseResponse, stat: string): boolean {
 
 /**
  * Shares received per share held, worked out from the prices: reference = (pre-ex close − cash) ÷ (1 + shares).
- * Used only for 2004 and 2005, which have no detail page. A capital increase paid for in cash on the same
- * ex-date cannot be told apart this way.
+ * A capital increase paid for in cash on the same ex-date cannot be told apart this way.
  */
 function deriveSharesPerShare(preExClose: number, referencePrice: number, cashDividend: number): number {
     if(referencePrice <= 0) return 0;
@@ -62,33 +56,35 @@ function deriveSharesPerShare(preExClose: number, referencePrice: number, cashDi
 }
 
 /**
- * 除權除息計算結果表 (TWT49U). From 2006 on, ex-dates on which shares were given out get their amounts
- * from {@link parseTwseDetail}, because the table does not tell a stock dividend from a capital increase paid for in cash.
+ * 除權除息計算結果表 (TWT49U). Ex-dates on which shares were given out get their amounts from
+ * {@link parseTwseDetail}, because the table does not tell a stock dividend from a capital increase paid for in cash.
+ * Some ex-dates of 2004 and 2005 have no detail page; for those the amounts estimated from the table are used.
  */
 export function parseTwseEvents(json: unknown): DividendEvent[] {
     const response = asResponse(json);
     if(response.stat === STAT_NO_DATA) return [];
     if(!isStat(response, STAT_OK)) throw new SourceFormatError(`TWT49U answered "${response.stat}"`);
     const read = makeRowReader(response.fields, EVENT_COLUMNS);
-    const canDeriveAmounts = !hasColumn(response.fields, DETAIL_COLUMN) && hasColumn(response.fields, CASH_COLUMN);
+    const hasCashColumn = hasColumn(response.fields, CASH_COLUMN);
     const events: DividendEvent[] = [];
     for(const row of response.data ?? []) {
         const date = parseRocDate(String(read(row, '資料日期')));
         const preExClose = parseNumber(read(row, '除權息前收盤價'));
         const referencePrice = parseNumber(read(row, '除權息參考價'));
         const totalValue = parseNumber(read(row, '權值+息值'));
-        const kind = EVENT_KINDS[String(read(row, '權/息')).trim()];
-        if(!date || !preExClose || referencePrice === undefined || totalValue === undefined || !kind) continue;
-        const tableCash = canDeriveAmounts ? parseNumber(read(row, CASH_COLUMN)) : undefined;
-        let cashDividend: number | null = null;
-        let stockDividendPerShare: number | null = null;
-        if(kind === 'cash') {
-            cashDividend = totalValue;
-            stockDividendPerShare = 0;
-        } else if(tableCash !== undefined) {
-            cashDividend = tableCash;
-            stockDividendPerShare = deriveSharesPerShare(preExClose, referencePrice, tableCash);
+        const kindText = String(read(row, '權/息')).trim();
+        const kind = EVENT_KINDS[kindText];
+        if(!kind) throw new SourceFormatError(`TWT49U has an unknown kind "${kindText}"`);
+        if(!date || !preExClose || referencePrice === undefined || totalValue === undefined) {
+            console.warn(`[sync] skipping a TWT49U row without a date or prices: ${JSON.stringify(row.slice(0, 8))}`);
+            continue;
         }
+        const isCashOnly = kind === 'cash';
+        const tableCash = !isCashOnly && hasCashColumn ? parseNumber(read(row, CASH_COLUMN)) : undefined;
+        const estimatedAmount: DividendAmount | undefined = tableCash === undefined ? undefined : {
+            cashDividend: tableCash,
+            stockDividendPerShare: deriveSharesPerShare(preExClose, referencePrice, tableCash),
+        };
         events.push({
             market: 'twse',
             id: String(read(row, '股票代號')).trim(),
@@ -97,25 +93,33 @@ export function parseTwseEvents(json: unknown): DividendEvent[] {
             preExClose,
             referencePrice,
             kind,
-            cashDividend,
-            stockDividendPerShare,
+            cashDividend: isCashOnly ? totalValue : null,
+            stockDividendPerShare: isCashOnly ? 0 : null,
+            ...(estimatedAmount ? { estimatedAmount } : {}),
         });
     }
     return events;
 }
 
-/** 除權除息計算結果表的詳細資料 (TWT49UDetail): the cash dividend and the free shares of one ex-date. */
-export function parseTwseDetail(json: unknown): DividendAmount | undefined {
+/**
+ * 除權除息計算結果表的詳細資料 (TWT49UDetail): the cash dividend and the free shares of one ex-date.
+ * Returns null only when the page says it has no data for the ex-date; any other unexpected answer throws,
+ * so an error page cannot be saved as a zero dividend.
+ */
+export function parseTwseDetail(json: unknown): DividendAmount | null {
     const response = asResponse(json);
-    if(!isStat(response, STAT_OK)) return undefined;
+    if(response.stat === STAT_NO_DETAIL) return null;
+    if(!isStat(response, STAT_OK)) throw new SourceFormatError(`TWT49UDetail answered "${response.stat}"`);
     const fields = Array.isArray(response.fields) ? response.fields.map((field) => String(field)) : [];
     const cashIndex = fields.findIndex((field) => field.includes(CASH_DIVIDEND_COLUMN));
     const sharesIndex = fields.findIndex((field) => field.includes(FREE_SHARES_COLUMN));
     const row = response.data?.[0];
-    if(cashIndex < 0 || sharesIndex < 0 || !row) return undefined;
+    if(cashIndex < 0 || sharesIndex < 0 || !row) throw new SourceFormatError('TWT49UDetail has no amounts columns or no row');
     const cashDividend = parseAmount(row[cashIndex]);
     const sharesPerThousand = parseAmount(row[sharesIndex]);
-    if(cashDividend === undefined || sharesPerThousand === undefined) return undefined;
+    if(cashDividend === undefined || sharesPerThousand === undefined) {
+        throw new SourceFormatError(`TWT49UDetail has amounts that are not numbers: ${row[cashIndex]}, ${row[sharesIndex]}`);
+    }
     return { cashDividend, stockDividendPerShare: sharesPerShare(sharesPerThousand) };
 }
 
@@ -142,7 +146,7 @@ export async function fetchTwseEvents(client: RateLimitedClient, start: string, 
     return parseTwseEvents(json);
 }
 
-export async function fetchTwseDetail(client: RateLimitedClient, id: string, isoDate: string): Promise<DividendAmount | undefined> {
+export async function fetchTwseDetail(client: RateLimitedClient, id: string, isoDate: string): Promise<DividendAmount | null> {
     const json = await client.getJson(`${BASE_URL}/exRight/TWT49UDetail?STK_NO=${encodeURIComponent(id)}&T1=${toCompactDate(isoDate)}&response=json`);
     return parseTwseDetail(json);
 }

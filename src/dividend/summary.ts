@@ -3,6 +3,11 @@ export type Market = 'twse' | 'tpex';
 /** cash: 除息, stock: 除權, both: 除權息 */
 export type EventKind = 'cash' | 'stock' | 'both';
 
+export interface DividendAmount {
+    cashDividend: number;
+    stockDividendPerShare: number;
+}
+
 /** One ex-rights or ex-dividend day of one stock, as the exchange published it. */
 export interface DividendEvent {
     market: Market;
@@ -19,12 +24,20 @@ export interface DividendEvent {
     cashDividend: number | null;
     /** Free shares received per share held (每千股無償配股 ÷ 1000); null until known */
     stockDividendPerShare: number | null;
+    /**
+     * Amounts worked out from the table (TWSE up to 2008, which gives the cash dividend in a column of its own).
+     * Used only when the detail page has no data, because they cannot tell a stock dividend from a capital
+     * increase paid for in cash.
+     */
+    estimatedAmount?: DividendAmount;
 }
 
 export interface TrackedDividendEvent extends DividendEvent {
     /** First trading day on which the stock closed at the pre-ex close or above; null while not filled */
     filledDate: string | null;
-    /** The detail page had no amounts; the event is then saved with zero amounts and not counted. */
+    /** The detail page had no data and the amounts were taken from estimatedAmount. */
+    amountEstimated?: boolean;
+    /** Neither the detail page nor the table gave the amounts; the event is saved with zero amounts and not counted. */
     amountUnavailable?: boolean;
 }
 
