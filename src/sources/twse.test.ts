@@ -76,6 +76,7 @@ describe('parseTwseDetail', () => {
 
     it('returns null only when the page says it has no data', () => {
         assert.equal(parseTwseDetail({ stat: '無相關資料' }), null);
+        assert.equal(parseTwseDetail({ stat: '查無相關資料' }), null);
     });
 
     it('throws on any other answer, so an error page is not saved as a zero dividend', () => {

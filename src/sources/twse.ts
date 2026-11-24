@@ -7,8 +7,8 @@ import { RateLimitedClient } from './rate-limited-client';
 const BASE_URL = 'https://www.twse.com.tw/rwd/zh';
 const STAT_OK = 'ok';
 const STAT_NO_DATA = '很抱歉，沒有符合條件的資料!';
-/** What the detail page answers for an ex-date it has no data for */
-const STAT_NO_DETAIL = '無相關資料';
+/** What the detail page answers for an ex-date it has no data for (both wordings are used, e.g. for 2004) */
+const STATS_NO_DETAIL: ReadonlySet<string> = new Set(['無相關資料', '查無相關資料']);
 const CLOSES_TABLE_TITLE = '每日收盤行情';
 const CASH_DIVIDEND_COLUMN = '現金股利';
 const FREE_SHARES_COLUMN = '每千股無償配股';
@@ -103,12 +103,12 @@ export function parseTwseEvents(json: unknown): DividendEvent[] {
 
 /**
  * 除權除息計算結果表的詳細資料 (TWT49UDetail): the cash dividend and the free shares of one ex-date.
- * Returns null only when the page says it has no data for the ex-date; any other unexpected answer throws,
+ * Returns null only when the page says it has no data for the ex-date (無相關資料 or 查無相關資料); any other unexpected answer throws,
  * so an error page cannot be saved as a zero dividend.
  */
 export function parseTwseDetail(json: unknown): DividendAmount | null {
     const response = asResponse(json);
-    if(response.stat === STAT_NO_DETAIL) return null;
+    if(STATS_NO_DETAIL.has(String(response.stat ?? '').trim())) return null;
     if(!isStat(response, STAT_OK)) throw new SourceFormatError(`TWT49UDetail answered "${response.stat}"`);
     const fields = Array.isArray(response.fields) ? response.fields.map((field) => String(field)) : [];
     const cashIndex = fields.findIndex((field) => field.includes(CASH_DIVIDEND_COLUMN));
