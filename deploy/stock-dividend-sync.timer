@@ -1,0 +1,11 @@
+[Unit]
+Description=Update the stock dividend data every evening
+
+[Timer]
+# 10:30 UTC = 18:30 in Taiwan, after both exchanges have published the day's closing prices
+OnCalendar=*-*-* 10:30:00 UTC
+RandomizedDelaySec=10min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

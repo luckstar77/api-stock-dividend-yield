@@ -1,11 +1,13 @@
 {
   "name": "api-stock-dividend-yield",
   "version": "1.0.0",
-  "description": "提供股票的API查詢資料，例如:填權息成功率、除權息次數、填權息次數、統計年分、歷年平均現金殖利率、歷年平均還原殖利率",
+  "description": "提供股票的API查詢資料，例如:填權息成功率、除權息次數、填權息次數、統計年分、歷年平均現金殖利率、歷年平均還原殖利率。資料來自證交所與櫃買中心的開放資料",
   "main": "index.js",
   "scripts": {
     "start": "ts-node src/index.ts",
-    "test": "echo ok"
+    "build": "tsc",
+    "sync": "node build/sync.js",
+    "test": "tsc && node --test $(find build -name '*.test.js')"
   },
   "repository": {
     "type": "git",
@@ -24,24 +26,16 @@
   },
   "homepage": "https://github.com/luckstar77/api-stock-dividend-yield#readme",
   "dependencies": {
-    "acorn": "^8.8.0",
     "axios": "^1.1.3",
-    "cheerio": "^1.0.0-rc.12",
     "cors": "^2.8.5",
-    "dayjs": "^1.11.5",
     "express": "^4.18.1",
-    "lodash": "^4.17.21",
     "mongodb": "^4.10.0",
-    "ramda": "^0.28.0",
-    "redis": "^4.3.1",
-    "puppeteer": "^22.0.0"
+    "redis": "^4.3.1"
   },
   "devDependencies": {
     "@types/cors": "^2.8.12",
     "@types/express": "^4.17.14",
-    "@types/lodash": "^4.14.186",
     "@types/node": "^18.8.2",
-    "@types/ramda": "^0.28.16",
     "@typescript-eslint/eslint-plugin": "^5.39.0",
     "@typescript-eslint/parser": "^5.39.0",
     "eslint": "^8.24.0"
