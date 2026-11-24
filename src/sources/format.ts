@@ -86,15 +86,15 @@ export function parseAmount(value: unknown): number | undefined {
     return match ? Number(match[0]) : undefined;
 }
 
-/** A few odd rows are skipped with a warning; this many and more than this share means the format changed. */
+/**
+ * A few odd rows are skipped with a warning. In the tables of 2004–2026 at most one row a year could not be read
+ * and no kind was unknown, so more than this in one table means the page format has changed.
+ */
 const MAX_SKIPPED_ROWS = 5;
-const MAX_SKIPPED_SHARE = 0.1;
 
 /** Throws when so many rows were skipped that the page format has probably changed. */
 export function assertFewSkipped(skipped: number, total: number, page: string): void {
-    if(skipped > MAX_SKIPPED_ROWS && skipped > total * MAX_SKIPPED_SHARE) {
-        throw new SourceFormatError(`${page}: ${skipped} of ${total} rows could not be read`);
-    }
+    if(skipped > MAX_SKIPPED_ROWS) throw new SourceFormatError(`${page}: ${skipped} of ${total} rows could not be read`);
 }
 
 export function hasColumn(fields: unknown, name: string): boolean {

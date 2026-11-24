@@ -39,10 +39,8 @@ const BULK_WRITE_SIZE = 500;
 const PROGRESS_LOG_EVERY = 100;
 /** Give up on Redis after this many connection attempts, so a run cannot hang. */
 const REDIS_MAX_RETRIES = 20;
-/** A detail page that cannot be read on this many runs is given up on, so one odd page cannot stop the backfill for good. */
-const MAX_DETAIL_FAILURES = 3;
-/** This many unreadable detail pages in a row means the site is answering with errors: stop and try later. */
-const MAX_CONSECUTIVE_DETAIL_FAILURES = 5;
+/** This many unreadable detail pages in a row look like the site answering with errors: the rest wait for the next run. */
+const MAX_UNREADABLE_IN_A_ROW = 5;
 
 interface SyncState {
     _id: string;
@@ -116,56 +114,56 @@ async function rewindForLateEvents(context: SyncContext, state: SyncState) {
     if(late.length > 0) await context.events.updateMany({ needsRecheck: true }, { $unset: { needsRecheck: '' } });
 }
 
-/**
- * Asks the detail page; returns undefined when the page could not be read this time.
- * Network failures stop the run. A page that answers something unreadable is counted against the event,
- * and after MAX_DETAIL_FAILURES runs the event is treated as having no detail page.
- */
-async function readDetail(context: SyncContext, event: WithId<TrackedDividendEvent>, unreadable: WithId<TrackedDividendEvent>[]): Promise<DividendAmount | null | undefined> {
+/** Returns undefined when the page answered something that could not be read; the event is asked again on the next run. */
+async function readDetail(context: SyncContext, event: WithId<TrackedDividendEvent>): Promise<DividendAmount | null | undefined> {
     try {
-        const detail = await fetchTwseDetail(context.twse, event.id, event.date);
-        await countDetailFailures(context, unreadable.splice(0));
-        return detail;
+        return await fetchTwseDetail(context.twse, event.id, event.date);
     } catch (error) {
         if(!(error instanceof SourceFormatError)) throw error;
-        if((event.detailFailures ?? 0) + 1 >= MAX_DETAIL_FAILURES) {
-            console.warn(`[sync] giving up on the detail page for ${event.id} on ${event.date}: ${describeError(error)}`);
-            return null;
-        }
-        unreadable.push(event);
-        console.warn(`[sync] the detail page for ${event.id} on ${event.date} could not be read: ${describeError(error)}`);
-        // Several in a row look like the site, not the pages: stop without counting them against the events.
-        if(unreadable.length >= MAX_CONSECUTIVE_DETAIL_FAILURES) throw new Error(`${unreadable.length} detail pages in a row could not be read`);
+        console.warn(`[sync] the detail page for ${event.id} on ${event.date} could not be read, asking again on the next run: ${describeError(error)}`);
+        await context.events.updateOne({ _id: event._id }, { $inc: { detailFailures: 1 } });
         return undefined;
     }
 }
 
-async function countDetailFailures(context: SyncContext, events: WithId<TrackedDividendEvent>[]) {
-    for(const event of events) await context.events.updateOne({ _id: event._id }, { $inc: { detailFailures: 1 } });
+async function saveAmount(context: SyncContext, event: WithId<TrackedDividendEvent>, detail: DividendAmount | null): Promise<'detail' | 'estimated' | 'missing'> {
+    const amount = detail ?? event.estimatedAmount;
+    if(!amount) {
+        // The page says it has no data and the table gives no estimate: left out of the summary, not asked again.
+        await context.events.updateOne({ _id: event._id }, { $set: { cashDividend: 0, stockDividendPerShare: 0, amountUnavailable: true } });
+        console.warn(`[sync] no amounts for ${event.id} on ${event.date}, neither on the detail page nor in the table; leaving it out`);
+        return 'missing';
+    }
+    await context.events.updateOne({ _id: event._id }, { $set: { ...amount, amountEstimated: !detail } });
+    return detail ? 'detail' : 'estimated';
 }
 
+/**
+ * Reads the amounts of the TWSE ex-dates on which shares were given out. A page that cannot be read is never
+ * saved as an amount: the event waits for the next run, and its stock keeps its previous summary until then.
+ */
 async function readTwseAmounts(context: SyncContext) {
-    const pending = await context.events.find({ market: 'twse', cashDividend: null }).sort({ date: 1 }).toArray();
-    const unreadable: WithId<TrackedDividendEvent>[] = [];
-    let estimated = 0;
-    let missing = 0;
+    // Ex-dates whose page could not be read before go last, so a page that keeps failing cannot hold up the others.
+    const pending = await context.events.find({ market: 'twse', cashDividend: null }).sort({ detailFailures: 1, date: 1 }).toArray();
+    const counts = { detail: 0, estimated: 0, missing: 0, unreadable: 0 };
+    let unreadableInARow = 0;
     for(const [index, event] of pending.entries()) {
-        const detail = await readDetail(context, event, unreadable);
-        if(detail === undefined) continue;
-        const amount = detail ?? event.estimatedAmount;
-        if(amount) {
-            if(!detail) estimated++;
-            await context.events.updateOne({ _id: event._id }, { $set: { ...amount, amountEstimated: !detail } });
-        } else {
-            // The page has no data for it and the table gives no estimate: left out of the summary, not asked again.
-            missing++;
-            await context.events.updateOne({ _id: event._id }, { $set: { cashDividend: 0, stockDividendPerShare: 0, amountUnavailable: true } });
-            console.warn(`[sync] no amounts for ${event.id} on ${event.date}, neither on the detail page nor in the table; leaving it out`);
-        }
         if((index + 1) % PROGRESS_LOG_EVERY === 0) log(`dividend amounts ${index + 1}/${pending.length}`);
+        const detail = await readDetail(context, event);
+        if(detail !== undefined) {
+            counts[await saveAmount(context, event, detail)]++;
+            unreadableInARow = 0;
+            continue;
+        }
+        counts.unreadable++;
+        unreadableInARow++;
+        if(unreadableInARow >= MAX_UNREADABLE_IN_A_ROW) {
+            console.warn(`[sync] ${unreadableInARow} detail pages in a row could not be read; the other ${pending.length - index - 1} ex-dates wait for the next run`);
+            break;
+        }
     }
-    await countDetailFailures(context, unreadable);
-    log(`dividend amounts: ${pending.length} asked, ${estimated} estimated from the table, ${missing} without amounts, ${unreadable.length} to ask again`);
+    log(`dividend amounts of ${pending.length} ex-dates: ${counts.detail} from the detail page, ${counts.estimated} estimated from the table, `
+        + `${counts.missing} without amounts, ${counts.unreadable} could not be read`);
 }
 
 function toPriceMap(closes: DayCloses): Map<string, number> {
@@ -219,7 +217,13 @@ function groupById(events: TrackedDividendEvent[]): Map<string, TrackedDividendE
 async function publishSummaries(db: Db, context: SyncContext, { latest, checkedThrough }: CheckResult) {
     const events = await context.events.find({}, { projection: { _id: 0 } }).sort({ date: 1 }).toArray();
     const operations: AnyBulkWriteOperation[] = [];
+    let waiting = 0;
     for(const [id, stockEvents] of groupById(events)) {
+        // A stock with an ex-date whose amounts are not known yet keeps its previous summary.
+        if(stockEvents.some((event) => event.cashDividend === null)) {
+            waiting++;
+            continue;
+        }
         const summary = summarizeDividends(stockEvents);
         if(!summary) continue;
         const name = latest?.twse.get(id)?.name ?? latest?.tpex.get(id)?.name ?? stockEvents[stockEvents.length - 1].name;
@@ -232,7 +236,7 @@ async function publishSummaries(db: Db, context: SyncContext, { latest, checkedT
         });
     }
     await bulkWriteInChunks(db.collection(STOCK_COLLECTION), operations);
-    log(`summaries written for ${operations.length} stocks`);
+    log(`summaries written for ${operations.length} stocks; ${waiting} stocks wait for dividend amounts`);
 }
 
 /** The search box offers the securities listed on the latest day on which both markets traded. */

@@ -39,7 +39,7 @@ export interface TrackedDividendEvent extends DividendEvent {
     amountEstimated?: boolean;
     /** Neither the detail page nor the table gave the amounts; the event is saved with zero amounts and not counted. */
     amountUnavailable?: boolean;
-    /** Times the detail page gave an answer that could not be read */
+    /** Times the detail page answered something that could not be read; only used to ask the other ex-dates first */
     detailFailures?: number;
     /** First saved after its ex-date had already been checked; cleared once the checkpoint is moved back */
     needsRecheck?: boolean;

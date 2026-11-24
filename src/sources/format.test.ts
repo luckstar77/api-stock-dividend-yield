@@ -57,10 +57,9 @@ describe('numbers', () => {
 });
 
 describe('assertFewSkipped', () => {
-    it('allows a few skipped rows and throws when more than 5 and more than a tenth are skipped', () => {
-        assert.doesNotThrow(() => assertFewSkipped(5, 10, 'page'));
-        assert.doesNotThrow(() => assertFewSkipped(9, 100, 'page'));
-        assert.throws(() => assertFewSkipped(11, 100, 'page'), SourceFormatError);
+    it('allows up to 5 skipped rows in a table and throws on more', () => {
+        assert.doesNotThrow(() => assertFewSkipped(5, 1500, 'page'));
+        assert.throws(() => assertFewSkipped(6, 1500, 'page'), SourceFormatError);
     });
 });
 
