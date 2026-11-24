@@ -2,7 +2,9 @@ import { MongoClient } from 'mongodb';
 
 // Connection URL
 const url = 'mongodb://localhost:27017';
-const client = new MongoClient(url);
+// Fail fast instead of keeping a request waiting for 30 seconds when MongoDB is down.
+const SERVER_SELECTION_TIMEOUT_MS = 5000;
+const client = new MongoClient(url, { serverSelectionTimeoutMS: SERVER_SELECTION_TIMEOUT_MS });
 
 // Database Name
 const dbName = 'inventory';
