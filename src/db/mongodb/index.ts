@@ -6,19 +6,15 @@ const url = 'mongodb://localhost:27017';
 const SERVER_SELECTION_TIMEOUT_MS = 5000;
 const client = new MongoClient(url, { serverSelectionTimeoutMS: SERVER_SELECTION_TIMEOUT_MS });
 
-// Database Name
-const dbName = 'inventory';
+// Database Name. MONGODB_DB_NAME lets a trial run of the sync write somewhere else.
+const dbName = process.env.MONGODB_DB_NAME || 'inventory';
 
 export async function connect() {
-    // TODO: error handler
-  
-    // Use connect method to connect to the server
     await client.connect();
     console.log('Connected successfully to server');
-    const db = client.db(dbName);
-    // const collection = db.collection('stock');
+    return client.db(dbName);
+}
 
-    // the following code examples can be pasted here...
-
-    return db;
+export async function disconnect() {
+    await client.close();
 }

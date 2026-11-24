@@ -1,0 +1,20 @@
+# Updates the dividend data from the TWSE and TPEx open data (build/sync.js).
+# Install: sudo cp deploy/stock-dividend-sync.* /etc/systemd/system/
+#          sudo systemctl daemon-reload && sudo systemctl enable --now stock-dividend-sync.timer
+[Unit]
+Description=Update the stock dividend data from the TWSE and TPEx open data
+After=network-online.target mongod.service redis-server.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+WorkingDirectory=/home/ubuntu/stock-dividend-yield/api-stock-dividend-yield
+# Node.js 20, like the API server (see README)
+ExecStart=/home/ubuntu/.nvm/versions/node/v20.19.4/bin/node build/sync.js
+# The first run reads every trading day since 2004 and takes about half a day.
+TimeoutStartSec=infinity
+Nice=10
+# When a source does not answer, try again later; each run carries on where the last one stopped.
+Restart=on-failure
+RestartSec=30min
