@@ -1,5 +1,5 @@
 import { DividendAmount, DividendEvent, EventKind, sharesPerShare } from '../dividend/summary';
-import { hasColumn, makeRowReader, parseAmount, parseNumber, parseRocDate, SourceFormatError, toCompactDate } from './format';
+import { assertFewSkipped, hasColumn, makeRowReader, parseAmount, parseNumber, parseRocDate, SourceFormatError, toCompactDate } from './format';
 import { RateLimitedClient } from './rate-limited-client';
 
 /** Taiwan Stock Exchange (上市) open data */
@@ -66,17 +66,16 @@ export function parseTwseEvents(json: unknown): DividendEvent[] {
     if(!isStat(response, STAT_OK)) throw new SourceFormatError(`TWT49U answered "${response.stat}"`);
     const read = makeRowReader(response.fields, EVENT_COLUMNS);
     const hasCashColumn = hasColumn(response.fields, CASH_COLUMN);
+    const rows = response.data ?? [];
     const events: DividendEvent[] = [];
-    for(const row of response.data ?? []) {
+    for(const row of rows) {
         const date = parseRocDate(String(read(row, '資料日期')));
         const preExClose = parseNumber(read(row, '除權息前收盤價'));
         const referencePrice = parseNumber(read(row, '除權息參考價'));
         const totalValue = parseNumber(read(row, '權值+息值'));
-        const kindText = String(read(row, '權/息')).trim();
-        const kind = EVENT_KINDS[kindText];
-        if(!kind) throw new SourceFormatError(`TWT49U has an unknown kind "${kindText}"`);
-        if(!date || !preExClose || referencePrice === undefined || totalValue === undefined) {
-            console.warn(`[sync] skipping a TWT49U row without a date or prices: ${JSON.stringify(row.slice(0, 8))}`);
+        const kind = EVENT_KINDS[String(read(row, '權/息')).trim()];
+        if(!kind || !date || !preExClose || referencePrice === undefined || totalValue === undefined) {
+            console.warn(`[sync] skipping a TWT49U row: ${JSON.stringify(row.slice(0, 8))}`);
             continue;
         }
         const isCashOnly = kind === 'cash';
@@ -98,6 +97,7 @@ export function parseTwseEvents(json: unknown): DividendEvent[] {
             ...(estimatedAmount ? { estimatedAmount } : {}),
         });
     }
+    assertFewSkipped(rows.length - events.length, rows.length, 'TWT49U');
     return events;
 }
 

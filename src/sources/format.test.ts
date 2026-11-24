@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { addDays, isSunday, makeRowReader, parseAmount, parseNumber, parseRocDate, SourceFormatError, taipeiNow, toRocSlashDate, yearRanges } from './format';
+import { addDays, assertFewSkipped, isSunday, makeRowReader, parseAmount, parseNumber, parseRocDate, SourceFormatError, taipeiNow, toRocSlashDate, yearRanges } from './format';
 
 describe('dates', () => {
     it('reads both ROC date formats', () => {
@@ -53,6 +53,14 @@ describe('numbers', () => {
         assert.equal(parseAmount('10,000,000 股'), 10000000);
         assert.equal(parseAmount(''), 0);
         assert.equal(parseAmount('無'), undefined);
+    });
+});
+
+describe('assertFewSkipped', () => {
+    it('allows a few skipped rows and throws when more than 5 and more than a tenth are skipped', () => {
+        assert.doesNotThrow(() => assertFewSkipped(5, 10, 'page'));
+        assert.doesNotThrow(() => assertFewSkipped(9, 100, 'page'));
+        assert.throws(() => assertFewSkipped(11, 100, 'page'), SourceFormatError);
     });
 });
 

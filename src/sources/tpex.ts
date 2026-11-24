@@ -1,5 +1,5 @@
 import { DividendEvent, EventKind, sharesPerShare } from '../dividend/summary';
-import { makeRowReader, parseNumber, parseRocDate, SourceFormatError, toCompactDate, toRocSlashDate } from './format';
+import { assertFewSkipped, makeRowReader, parseNumber, parseRocDate, SourceFormatError, toCompactDate, toRocSlashDate } from './format';
 import { RateLimitedClient } from './rate-limited-client';
 import { StockClose } from './twse';
 
@@ -49,11 +49,9 @@ export function parseTpexEvents(json: unknown, start: string, end: string): Divi
         const referencePrice = parseNumber(read(row, '除權息參考價'));
         const cashDividend = parseNumber(read(row, '息值'));
         const sharesPerThousand = parseNumber(read(row, '每仟股無償配股'));
-        const kindText = String(read(row, '權/息')).trim();
-        const kind = EVENT_KINDS[kindText];
-        if(!kind) throw new SourceFormatError(`exDailyQ has an unknown kind "${kindText}"`);
-        if(!date || !preExClose || referencePrice === undefined || cashDividend === undefined || sharesPerThousand === undefined) {
-            console.warn(`[sync] skipping an exDailyQ row without a date, prices or amounts: ${JSON.stringify(row.slice(0, 9))}`);
+        const kind = EVENT_KINDS[String(read(row, '權/息')).trim()];
+        if(!kind || !date || !preExClose || referencePrice === undefined || cashDividend === undefined || sharesPerThousand === undefined) {
+            console.warn(`[sync] skipping an exDailyQ row: ${JSON.stringify(row.slice(0, 9))}`);
             continue;
         }
         events.push({
@@ -68,6 +66,7 @@ export function parseTpexEvents(json: unknown, start: string, end: string): Divi
             stockDividendPerShare: sharesPerShare(sharesPerThousand),
         });
     }
+    assertFewSkipped(table.data.length - events.length, table.data.length, 'exDailyQ');
     return events;
 }
 

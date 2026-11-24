@@ -42,10 +42,14 @@ describe('parseTwseEvents', () => {
         assert.deepEqual(actual.estimatedAmount, { cashDividend: 0, stockDividendPerShare: 0.200873 });
     });
 
-    it('throws on a kind it does not know, instead of dropping the row', () => {
-        const inputResponse = { stat: 'OK', fields: CURRENT_EVENT_FIELDS, data: [['113年01月04日', '2454', '聯發科', '953.00', '928.40', '24.600000', '除息', '', '', '', '', '']] };
+    it('skips a few rows it cannot read, but throws when many cannot be read', () => {
+        const goodRow = ['113年01月04日', '2454', '聯發科', '953.00', '928.40', '24.600000', '息', '', '', '', '', ''];
+        const oddRow = ['113年01月04日', '2455', '奇怪', '953.00', '928.40', '24.600000', '除息', '', '', '', '', ''];
+        const fewOdd = { stat: 'OK', fields: CURRENT_EVENT_FIELDS, data: [...Array(20).fill(goodRow), oddRow] };
+        const manyOdd = { stat: 'OK', fields: CURRENT_EVENT_FIELDS, data: [...Array(20).fill(goodRow), ...Array(6).fill(oddRow)] };
 
-        assert.throws(() => parseTwseEvents(inputResponse), SourceFormatError);
+        assert.equal(parseTwseEvents(fewOdd).length, 20);
+        assert.throws(() => parseTwseEvents(manyOdd), SourceFormatError);
     });
 
     it('returns nothing for a period without ex-dates and throws on any other answer', () => {

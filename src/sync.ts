@@ -13,9 +13,10 @@
 import { AnyBulkWriteOperation, Collection, Db, Document, WithId } from 'mongodb';
 import { connect as mongodbConnect, disconnect as mongodbDisconnect } from './db/mongodb';
 import { connect as redisConnect, RedisClient } from './db/redis';
-import { DividendEvent, findFilledEvents, Market, summarizeDividends, TrackedDividendEvent } from './dividend/summary';
-import { datesToCheck, eventsReadStart, judgeDay, rewindCheckpoint, targetDate, toEventUpsert } from './dividend/sync-rules';
-import { laterOf, taipeiNow, yearRanges } from './sources/format';
+import { ClosesSource, DayCloses, readClosesOfDay } from './dividend/closes';
+import { DividendAmount, DividendEvent, findFilledEvents, Market, summarizeDividends, TrackedDividendEvent } from './dividend/summary';
+import { datesToCheck, eventsReadStart, rewindCheckpoint, targetDate, toEventUpsert } from './dividend/sync-rules';
+import { laterOf, SourceFormatError, taipeiNow, yearRanges } from './sources/format';
 import { describeError, RateLimitedClient } from './sources/rate-limited-client';
 import { fetchTpexCloses, fetchTpexEvents } from './sources/tpex';
 import { fetchTwseCloses, fetchTwseDetail, fetchTwseEvents, StockClose } from './sources/twse';
@@ -38,6 +39,10 @@ const BULK_WRITE_SIZE = 500;
 const PROGRESS_LOG_EVERY = 100;
 /** Give up on Redis after this many connection attempts, so a run cannot hang. */
 const REDIS_MAX_RETRIES = 20;
+/** A detail page that cannot be read on this many runs is given up on, so one odd page cannot stop the backfill for good. */
+const MAX_DETAIL_FAILURES = 3;
+/** This many unreadable detail pages in a row means the site is answering with errors: stop and try later. */
+const MAX_CONSECUTIVE_DETAIL_FAILURES = 5;
 
 interface SyncState {
     _id: string;
@@ -47,11 +52,8 @@ interface SyncState {
     eventsReadThrough?: Partial<Record<Market, string>>;
 }
 
-interface MarketSource {
-    market: Market;
-    firstDate: string;
+interface MarketSource extends ClosesSource {
     fetchEvents: (start: string, end: string) => Promise<DividendEvent[]>;
-    fetchCloses: (date: string) => Promise<Map<string, StockClose> | null>;
 }
 
 interface TradingDay {
@@ -71,7 +73,12 @@ interface SyncContext {
     today: string;
 }
 
-type DayCloses = Partial<Record<Market, Map<string, StockClose>>>;
+interface CheckResult {
+    /** The latest day on which both markets traded, for the stock list */
+    latest?: TradingDay;
+    /** The last day whose closing prices have been checked */
+    checkedThrough?: string;
+}
 
 function log(message: string) {
     console.log(`[sync] ${message}`);
@@ -83,45 +90,68 @@ async function bulkWriteInChunks<T extends Document>(collection: Collection<T>, 
     }
 }
 
-/** Saves the events and returns the ex-dates of the ones that were not saved before. */
-async function upsertEvents(collection: Collection<TrackedDividendEvent>, events: DividendEvent[]): Promise<string[]> {
-    const newDates: string[] = [];
-    for(let index = 0; index < events.length; index += BULK_WRITE_SIZE) {
-        const chunk = events.slice(index, index + BULK_WRITE_SIZE);
-        const result = await collection.bulkWrite(chunk.map(toEventUpsert), { ordered: false });
-        for(const position of Object.keys(result.upsertedIds)) newDates.push(chunk[Number(position)].date);
-    }
-    return newDates;
-}
-
-async function readEvents(context: SyncContext, state: SyncState, source: MarketSource): Promise<string[]> {
+async function readEvents(context: SyncContext, state: SyncState, source: MarketSource) {
     const firstDate = laterOf(source.firstDate, context.firstDate);
-    const newDates: string[] = [];
     for(const range of yearRanges(eventsReadStart(state.eventsReadThrough?.[source.market], firstDate), context.lastDate)) {
         const found = await source.fetchEvents(range.start, range.end);
-        newDates.push(...(await upsertEvents(context.events, found)));
+        await bulkWriteInChunks(context.events, found.map((event) => toEventUpsert(event, state.lastCloseDate)));
         await context.states.updateOne({ _id: STATE_ID }, { $set: { [`eventsReadThrough.${source.market}`]: range.end } }, { upsert: true });
         log(`${source.market} ex-dividend data ${range.start}..${range.end}: ${found.length} rows`);
     }
-    return newDates;
 }
 
-/** A newly published ex-date on a day that was already checked: check again from that day on. */
-async function rewindForNewEvents(context: SyncContext, state: SyncState, newDates: string[]) {
-    const rewound = rewindCheckpoint(state.lastCloseDate, newDates);
-    if(rewound === state.lastCloseDate) return;
-    log(`new ex-dates on days already checked; checking again from ${rewound} on`);
-    state.lastCloseDate = rewound;
-    await context.states.updateOne({ _id: STATE_ID }, { $set: { lastCloseDate: rewound } });
+/**
+ * Ex-dates first saved on days already checked (flagged needsRecheck when saved): move the checkpoint back
+ * so they are checked from their ex-date on. The flags are cleared only after the checkpoint is saved,
+ * so a run that stops in between moves it back again, which is harmless.
+ */
+async function rewindForLateEvents(context: SyncContext, state: SyncState) {
+    const late = await context.events.find({ needsRecheck: true }, { projection: { date: 1 } }).toArray();
+    const rewound = rewindCheckpoint(state.lastCloseDate, late.map((event) => event.date));
+    if(rewound !== state.lastCloseDate) {
+        log(`${late.length} ex-dates appeared after their day was checked; checking again from ${rewound} on`);
+        await context.states.updateOne({ _id: STATE_ID }, { $set: { lastCloseDate: rewound } });
+        state.lastCloseDate = rewound;
+    }
+    if(late.length > 0) await context.events.updateMany({ needsRecheck: true }, { $unset: { needsRecheck: '' } });
+}
+
+/**
+ * Asks the detail page; returns undefined when the page could not be read this time.
+ * Network failures stop the run. A page that answers something unreadable is counted against the event,
+ * and after MAX_DETAIL_FAILURES runs the event is treated as having no detail page.
+ */
+async function readDetail(context: SyncContext, event: WithId<TrackedDividendEvent>, unreadable: WithId<TrackedDividendEvent>[]): Promise<DividendAmount | null | undefined> {
+    try {
+        const detail = await fetchTwseDetail(context.twse, event.id, event.date);
+        await countDetailFailures(context, unreadable.splice(0));
+        return detail;
+    } catch (error) {
+        if(!(error instanceof SourceFormatError)) throw error;
+        if((event.detailFailures ?? 0) + 1 >= MAX_DETAIL_FAILURES) {
+            console.warn(`[sync] giving up on the detail page for ${event.id} on ${event.date}: ${describeError(error)}`);
+            return null;
+        }
+        unreadable.push(event);
+        console.warn(`[sync] the detail page for ${event.id} on ${event.date} could not be read: ${describeError(error)}`);
+        // Several in a row look like the site, not the pages: stop without counting them against the events.
+        if(unreadable.length >= MAX_CONSECUTIVE_DETAIL_FAILURES) throw new Error(`${unreadable.length} detail pages in a row could not be read`);
+        return undefined;
+    }
+}
+
+async function countDetailFailures(context: SyncContext, events: WithId<TrackedDividendEvent>[]) {
+    for(const event of events) await context.events.updateOne({ _id: event._id }, { $inc: { detailFailures: 1 } });
 }
 
 async function readTwseAmounts(context: SyncContext) {
     const pending = await context.events.find({ market: 'twse', cashDividend: null }).sort({ date: 1 }).toArray();
+    const unreadable: WithId<TrackedDividendEvent>[] = [];
     let estimated = 0;
     let missing = 0;
     for(const [index, event] of pending.entries()) {
-        // Throws on an unexpected answer, so the run stops and the event is asked again on the next run.
-        const detail = await fetchTwseDetail(context.twse, event.id, event.date);
+        const detail = await readDetail(context, event, unreadable);
+        if(detail === undefined) continue;
         const amount = detail ?? event.estimatedAmount;
         if(amount) {
             if(!detail) estimated++;
@@ -134,39 +164,8 @@ async function readTwseAmounts(context: SyncContext) {
         }
         if((index + 1) % PROGRESS_LOG_EVERY === 0) log(`dividend amounts ${index + 1}/${pending.length}`);
     }
-    log(`dividend amounts read for ${pending.length - missing} ex-dates (${estimated} estimated from the table), ${missing} without amounts`);
-}
-
-function expectedSources(context: SyncContext, date: string): MarketSource[] {
-    return context.sources.filter((source) => date >= source.firstDate);
-}
-
-async function readCloses(sources: MarketSource[], date: string, closes: DayCloses = {}): Promise<DayCloses> {
-    const answers = await Promise.all(sources.map((source) => source.fetchCloses(date)));
-    const result: DayCloses = { ...closes };
-    sources.forEach((source, index) => {
-        const answer = answers[index];
-        if(answer) result[source.market] = answer;
-    });
-    return result;
-}
-
-/**
- * Reads one day's closing prices from every market that has data for it. When only one market answers
- * with prices, the other is asked once more; a recent day still missing a market stops the run so a later
- * run can try again, an older one is accepted with a warning.
- */
-async function readClosesOfDay(context: SyncContext, date: string): Promise<DayCloses> {
-    const sources = expectedSources(context, date);
-    const expected = sources.map((source) => source.market);
-    const traded = (closes: DayCloses) => expected.filter((market) => closes[market] !== undefined);
-    let closes = await readCloses(sources, date);
-    if(judgeDay(expected, traded(closes), date, context.today) === 'holiday' || traded(closes).length === expected.length) return closes;
-    closes = await readCloses(sources.filter((source) => !closes[source.market]), date, closes);
-    const verdict = judgeDay(expected, traded(closes), date, context.today);
-    if(verdict === 'retry-later') throw new Error(`${date}: only ${traded(closes).join(', ')} has closing prices yet`);
-    if(verdict === 'one-market') console.warn(`[sync] ${date}: only ${traded(closes).join(', ')} has closing prices; going on without the other market`);
-    return closes;
+    await countDetailFailures(context, unreadable);
+    log(`dividend amounts: ${pending.length} asked, ${estimated} estimated from the table, ${missing} without amounts, ${unreadable.length} to ask again`);
 }
 
 function toPriceMap(closes: DayCloses): Map<string, number> {
@@ -177,12 +176,20 @@ function toPriceMap(closes: DayCloses): Map<string, number> {
     return prices;
 }
 
-/** Checks the closing prices of every day since the last run. Returns the latest day on which both markets traded. */
-async function checkFills(context: SyncContext, state: SyncState): Promise<TradingDay | undefined> {
+/**
+ * Checks the closing prices of every day since the last checked one. A recent day on which a market has
+ * no prices yet ends the checks there; the next scheduled run tries that day again.
+ */
+async function checkFills(context: SyncContext, state: SyncState): Promise<CheckResult> {
     let open: WithId<TrackedDividendEvent>[] = await context.events.find({ filledDate: null }).toArray();
     let latest: TradingDay | undefined;
     for(const [index, date] of datesToCheck(state.lastCloseDate, context.firstDate, context.lastDate).entries()) {
-        const closes = await readClosesOfDay(context, date);
+        const { closes, verdict } = await readClosesOfDay(context.sources, date, context.today);
+        if(verdict === 'retry-later') {
+            console.warn(`[sync] ${date}: not every market has closing prices yet; stopping at the day before, the next run tries again`);
+            break;
+        }
+        if(verdict === 'one-market') console.warn(`[sync] ${date}: only some markets have closing prices; going on without the others`);
         const filled = findFilledEvents(open, date, toPriceMap(closes));
         if(filled.length > 0) {
             await bulkWriteInChunks(context.events, filled.map((event) => ({ updateOne: { filter: { _id: event._id }, update: { $set: { filledDate: date } } } })));
@@ -192,10 +199,11 @@ async function checkFills(context: SyncContext, state: SyncState): Promise<Tradi
         if(closes.twse && closes.tpex) latest = { date, twse: closes.twse, tpex: closes.tpex };
         // Saved after the fills, so a run that stops in between checks the day again; that is safe.
         await context.states.updateOne({ _id: STATE_ID }, { $set: { lastCloseDate: date } }, { upsert: true });
+        state.lastCloseDate = date;
         if((index + 1) % PROGRESS_LOG_EVERY === 0) log(`closing prices checked through ${date}, ${open.length} ex-dates not filled yet`);
     }
-    log(`closing prices checked through ${context.lastDate}, ${open.length} ex-dates not filled yet`);
-    return latest;
+    log(`closing prices checked through ${state.lastCloseDate}, ${open.length} ex-dates not filled yet`);
+    return { latest, checkedThrough: state.lastCloseDate };
 }
 
 function groupById(events: TrackedDividendEvent[]): Map<string, TrackedDividendEvent[]> {
@@ -208,7 +216,7 @@ function groupById(events: TrackedDividendEvent[]): Map<string, TrackedDividendE
     return groups;
 }
 
-async function publishSummaries(db: Db, context: SyncContext, latest: TradingDay | undefined) {
+async function publishSummaries(db: Db, context: SyncContext, { latest, checkedThrough }: CheckResult) {
     const events = await context.events.find({}, { projection: { _id: 0 } }).sort({ date: 1 }).toArray();
     const operations: AnyBulkWriteOperation[] = [];
     for(const [id, stockEvents] of groupById(events)) {
@@ -218,7 +226,7 @@ async function publishSummaries(db: Db, context: SyncContext, latest: TradingDay
         operations.push({
             updateOne: {
                 filter: { id },
-                update: { $set: { name, ...summary, source: SOURCE, dataThrough: context.lastDate, updated: new Date() } },
+                update: { $set: { name, ...summary, source: SOURCE, dataThrough: checkedThrough, updated: new Date() } },
                 upsert: true,
             },
         });
@@ -258,12 +266,12 @@ async function syncDividends(db: Db): Promise<TradingDay | undefined> {
     const state: SyncState = (await states.findOne({ _id: STATE_ID })) ?? { _id: STATE_ID };
     log(`run started, closing prices checked through ${state.lastCloseDate ?? 'nothing yet'}, target ${context.lastDate}`);
 
-    const newDates = await Promise.all(context.sources.map((source) => readEvents(context, state, source)));
-    await rewindForNewEvents(context, state, newDates.flat());
+    await Promise.all(context.sources.map((source) => readEvents(context, state, source)));
+    await rewindForLateEvents(context, state);
     await readTwseAmounts(context);
-    const latest = await checkFills(context, state);
-    await publishSummaries(db, context, latest);
-    return latest;
+    const result = await checkFills(context, state);
+    await publishSummaries(db, context, result);
+    return result.latest;
 }
 
 async function main() {
@@ -275,7 +283,8 @@ async function main() {
             try {
                 await publishStockList(redis, latest);
             } finally {
-                await redis.quit();
+                // A failure to close must not hide the error that got here.
+                await redis.quit().catch((error) => console.warn(`[sync] closing Redis: ${describeError(error)}`));
             }
         }
         log('run finished');

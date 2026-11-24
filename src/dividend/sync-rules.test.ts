@@ -63,6 +63,19 @@ describe('toEventUpsert', () => {
             $setOnInsert: { filledDate: null },
         });
     });
+
+    it('flags an event first saved after its ex-date was checked, in the same write', () => {
+        const late = toEventUpsert(inputEvent, '2015-01-20');
+        const onTime = toEventUpsert(inputEvent, '2015-01-02');
+        const unchecked = toEventUpsert(inputEvent);
+
+        assert.ok('updateOne' in late && 'updateOne' in onTime && 'updateOne' in unchecked);
+        assert.deepEqual(late.updateOne.update, {
+            $set: { name: '宏碁', preExClose: 21.35, referencePrice: 21.02, kind: 'stock' },
+            $setOnInsert: { filledDate: null, cashDividend: null, stockDividendPerShare: null, needsRecheck: true },
+        });
+        assert.deepEqual(onTime.updateOne.update, unchecked.updateOne.update);
+    });
 });
 
 describe('judgeDay', () => {

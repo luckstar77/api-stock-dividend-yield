@@ -39,16 +39,23 @@ export function eventsReadStart(readThrough: string | undefined, firstDate: stri
 /**
  * Saves the amounts when the table gives them; otherwise keeps what an earlier run read from the detail page.
  * filledDate is set only when the event is first saved, so reading the table again never clears it.
+ * An event first saved with an ex-date on a day already checked (checkedThrough) is flagged needsRecheck
+ * in the same write, so the flag survives a run that stops right after it.
  */
-export function toEventUpsert(event: DividendEvent): AnyBulkWriteOperation<TrackedDividendEvent> {
+export function toEventUpsert(event: DividendEvent, checkedThrough?: string): AnyBulkWriteOperation<TrackedDividendEvent> {
     const { market, id, date, cashDividend, stockDividendPerShare, ...published } = event;
     const isAmountKnown = cashDividend !== null && stockDividendPerShare !== null;
+    const needsRecheck = checkedThrough !== undefined && date <= checkedThrough;
     return {
         updateOne: {
             filter: { market, id, date },
             update: {
                 $set: isAmountKnown ? { ...published, cashDividend, stockDividendPerShare } : published,
-                $setOnInsert: isAmountKnown ? { filledDate: null } : { filledDate: null, cashDividend: null, stockDividendPerShare: null },
+                $setOnInsert: {
+                    filledDate: null,
+                    ...(isAmountKnown ? {} : { cashDividend: null, stockDividendPerShare: null }),
+                    ...(needsRecheck ? { needsRecheck } : {}),
+                },
             },
             upsert: true,
         },
@@ -65,8 +72,8 @@ export function judgeDay(expectedMarkets: readonly Market[], tradedMarkets: read
  * An ex-date that first appears on a day already checked has to be checked from its ex-date on.
  * Checking a day again is safe: events filled earlier stay filled, and open ones get the same answer.
  */
-export function rewindCheckpoint(lastCloseDate: string | undefined, newEventDates: readonly string[]): string | undefined {
-    if(!lastCloseDate || newEventDates.length === 0) return lastCloseDate;
-    const earliest = newEventDates.reduce((first, date) => (date < first ? date : first));
+export function rewindCheckpoint(lastCloseDate: string | undefined, recheckDates: readonly string[]): string | undefined {
+    if(!lastCloseDate || recheckDates.length === 0) return lastCloseDate;
+    const earliest = recheckDates.reduce((first, date) => (date < first ? date : first));
     return earliest <= lastCloseDate ? addDays(earliest, -1) : lastCloseDate;
 }
