@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { DividendEvent } from './summary';
-import { datesToCheck, eventsReadStart, isSettled, judgeDay, rewindCheckpoint, targetDate, toEventUpsert } from './sync-rules';
+import { datesToCheck, eventsReadStart, isSettled, judgeDay, rewindCheckpoint, targetDate, toEventUpsert, trackUnreadableDays, UnreadableStreaks } from './sync-rules';
 
 describe('targetDate', () => {
     it('includes today only after the closing prices are published', () => {
@@ -95,6 +95,32 @@ describe('isSettled', () => {
     it('treats days more than 7 days back as settled', () => {
         assert.equal(isSettled('2026-11-17', '2026-11-24'), false);
         assert.equal(isSettled('2026-11-16', '2026-11-24'), true);
+    });
+});
+
+describe('trackUnreadableDays', () => {
+    const MARKETS = ['twse', 'tpex'] as const;
+
+    it('lets a single unreadable day pass and resets the streak on a readable day', () => {
+        const first = trackUnreadableDays({}, MARKETS, ['tpex'], '2015-06-01');
+        const second = trackUnreadableDays(first.streaks, MARKETS, [], '2015-06-02');
+
+        assert.deepEqual(first.tooLong, []);
+        assert.deepEqual(first.streaks, { twse: [], tpex: ['2015-06-01'] });
+        assert.deepEqual(second.streaks, { twse: [], tpex: [] });
+    });
+
+    it('reports a market once it could not be read on 3 days in a row', () => {
+        let streaks: UnreadableStreaks = {};
+        const tooLong: string[][] = [];
+        for(const date of ['2015-06-01', '2015-06-02', '2015-06-03']) {
+            const result = trackUnreadableDays(streaks, MARKETS, ['twse'], date);
+            streaks = result.streaks;
+            tooLong.push(result.tooLong);
+        }
+
+        assert.deepEqual(tooLong, [[], [], ['twse']]);
+        assert.deepEqual(streaks.twse, ['2015-06-01', '2015-06-02', '2015-06-03']);
     });
 });
 

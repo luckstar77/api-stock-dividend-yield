@@ -15,8 +15,8 @@ import { connect as mongodbConnect, disconnect as mongodbDisconnect } from './db
 import { connect as redisConnect, RedisClient } from './db/redis';
 import { ClosesSource, DayCloses, readClosesOfDay } from './dividend/closes';
 import { DividendAmount, DividendEvent, findFilledEvents, Market, summarizeDividends, TrackedDividendEvent } from './dividend/summary';
-import { datesToCheck, eventsReadStart, rewindCheckpoint, targetDate, toEventUpsert } from './dividend/sync-rules';
-import { laterOf, SourceFormatError, taipeiNow, yearRanges } from './sources/format';
+import { datesToCheck, eventsReadStart, rewindCheckpoint, targetDate, toEventUpsert, trackUnreadableDays, UnreadableStreaks } from './dividend/sync-rules';
+import { addDays, laterOf, SourceFormatError, taipeiNow, yearRanges } from './sources/format';
 import { describeError, RateLimitedClient } from './sources/rate-limited-client';
 import { fetchTpexCloses, fetchTpexEvents } from './sources/tpex';
 import { fetchTwseCloses, fetchTwseDetail, fetchTwseEvents, StockClose } from './sources/twse';
@@ -168,6 +168,30 @@ async function readTwseAmounts(context: SyncContext) {
         + `${counts.missing} without amounts, ${counts.unreadable} could not be read`);
 }
 
+/**
+ * Records an old day on which a market's closing prices page could not be read. When a market could not be read on
+ * several days in a row, the checkpoint goes back to the day before the first of them and the run stops before this
+ * day is used, so systemd checks those days again in 30 minutes.
+ */
+async function noteUnreadableDay(context: SyncContext, streaks: UnreadableStreaks, date: string, unreadable: Market[]): Promise<UnreadableStreaks> {
+    const markets = context.sources.map((source) => source.market);
+    const tracked = trackUnreadableDays(streaks, markets, unreadable, date);
+    if(tracked.tooLong.length > 0) {
+        const days = tracked.tooLong.flatMap((market) => (tracked.streaks[market] ?? []).map((day) => ({ day, market })));
+        const first = days.map(({ day }) => day).sort()[0];
+        await context.states.updateOne({ _id: STATE_ID }, {
+            $set: { lastCloseDate: addDays(first, -1) },
+            $pull: { unreadableCloseDays: { $in: days.map(({ day, market }) => `${day} ${market}`) } },
+        });
+        throw new Error(`the closing prices page of ${tracked.tooLong.join(', ')} could not be read on several days in a row from ${first}; checking again from that day`);
+    }
+    if(unreadable.length > 0) {
+        console.warn(`[sync] ${date}: the closing prices page of ${unreadable.join(', ')} could not be read; checking that day without it`);
+        await context.states.updateOne({ _id: STATE_ID }, { $addToSet: { unreadableCloseDays: { $each: unreadable.map((market) => `${date} ${market}`) } } });
+    }
+    return tracked.streaks;
+}
+
 function toPriceMap(closes: DayCloses): Map<string, number> {
     const prices = new Map<string, number>();
     for(const marketCloses of Object.values(closes)) {
@@ -183,12 +207,10 @@ function toPriceMap(closes: DayCloses): Map<string, number> {
 async function checkFills(context: SyncContext, state: SyncState): Promise<CheckResult> {
     let open: WithId<TrackedDividendEvent>[] = await context.events.find({ filledDate: null }).toArray();
     let latest: TradingDay | undefined;
+    let streaks: UnreadableStreaks = {};
     for(const [index, date] of datesToCheck(state.lastCloseDate, context.firstDate, context.lastDate).entries()) {
         const { closes, verdict, unreadable } = await readClosesOfDay(context.sources, date, context.today);
-        if(unreadable.length > 0) {
-            console.warn(`[sync] ${date}: the closing prices page of ${unreadable.join(', ')} could not be read; checking that day without it`);
-            await context.states.updateOne({ _id: STATE_ID }, { $addToSet: { unreadableCloseDays: { $each: unreadable.map((market) => `${date} ${market}`) } } });
-        }
+        streaks = await noteUnreadableDay(context, streaks, date, unreadable);
         if(verdict === 'retry-later') {
             console.warn(`[sync] ${date}: not every market has closing prices yet; stopping at the day before, the next run tries again`);
             break;

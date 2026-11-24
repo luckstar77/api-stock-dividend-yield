@@ -13,6 +13,11 @@ export const EVENTS_REFETCH_DAYS = 31;
  * An older gap will not be filled in by trying again, so it is accepted with a warning.
  */
 export const ONE_MARKET_RETRY_DAYS = 7;
+/**
+ * A single old day whose closing prices page cannot be read is skipped for that market. This many days in a row
+ * look like the site answering with errors (for example throttling), so the run stops and checks them again later.
+ */
+export const MAX_UNREADABLE_DAYS_IN_A_ROW = 3;
 
 /** holiday: no market traded. trading: every market that should have prices has them. */
 export type DayVerdict = 'holiday' | 'trading' | 'retry-later' | 'one-market';
@@ -71,6 +76,17 @@ export function judgeDay(expectedMarkets: readonly Market[], tradedMarkets: read
     if(tradedMarkets.length === 0) return 'holiday';
     if(expectedMarkets.every((market) => tradedMarkets.includes(market))) return 'trading';
     return isSettled(date, today) ? 'one-market' : 'retry-later';
+}
+
+/** Per market, the days in a row (up to the latest one checked) whose closing prices page could not be read */
+export type UnreadableStreaks = Partial<Record<Market, string[]>>;
+
+/** Adds one checked day to the streaks and returns the markets whose streak has become too long. */
+export function trackUnreadableDays(streaks: UnreadableStreaks, markets: readonly Market[], unreadable: readonly Market[], date: string) {
+    const next: UnreadableStreaks = {};
+    for(const market of markets) next[market] = unreadable.includes(market) ? [...(streaks[market] ?? []), date] : [];
+    const tooLong = unreadable.filter((market) => (next[market] ?? []).length >= MAX_UNREADABLE_DAYS_IN_A_ROW);
+    return { streaks: next, tooLong };
 }
 
 /**
