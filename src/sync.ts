@@ -48,6 +48,8 @@ interface SyncState {
     lastCloseDate?: string;
     /** The last day whose ex-dividend data was read, per market */
     eventsReadThrough?: Partial<Record<Market, string>>;
+    /** Old days on which a market's closing prices page could not be read; their fills were checked without that market */
+    unreadableCloseDays?: string[];
 }
 
 interface MarketSource extends ClosesSource {
@@ -182,7 +184,11 @@ async function checkFills(context: SyncContext, state: SyncState): Promise<Check
     let open: WithId<TrackedDividendEvent>[] = await context.events.find({ filledDate: null }).toArray();
     let latest: TradingDay | undefined;
     for(const [index, date] of datesToCheck(state.lastCloseDate, context.firstDate, context.lastDate).entries()) {
-        const { closes, verdict } = await readClosesOfDay(context.sources, date, context.today);
+        const { closes, verdict, unreadable } = await readClosesOfDay(context.sources, date, context.today);
+        if(unreadable.length > 0) {
+            console.warn(`[sync] ${date}: the closing prices page of ${unreadable.join(', ')} could not be read; checking that day without it`);
+            await context.states.updateOne({ _id: STATE_ID }, { $addToSet: { unreadableCloseDays: { $each: unreadable.map((market) => `${date} ${market}`) } } });
+        }
         if(verdict === 'retry-later') {
             console.warn(`[sync] ${date}: not every market has closing prices yet; stopping at the day before, the next run tries again`);
             break;

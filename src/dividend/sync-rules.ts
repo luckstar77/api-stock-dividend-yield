@@ -62,10 +62,15 @@ export function toEventUpsert(event: DividendEvent, checkedThrough?: string): An
     };
 }
 
+/** A day this old will not change by asking again, so a gap in it is accepted with a warning. */
+export function isSettled(date: string, today: string): boolean {
+    return date < addDays(today, -ONE_MARKET_RETRY_DAYS);
+}
+
 export function judgeDay(expectedMarkets: readonly Market[], tradedMarkets: readonly Market[], date: string, today: string): DayVerdict {
     if(tradedMarkets.length === 0) return 'holiday';
     if(expectedMarkets.every((market) => tradedMarkets.includes(market))) return 'trading';
-    return date >= addDays(today, -ONE_MARKET_RETRY_DAYS) ? 'retry-later' : 'one-market';
+    return isSettled(date, today) ? 'one-market' : 'retry-later';
 }
 
 /**

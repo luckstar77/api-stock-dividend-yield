@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { DividendEvent } from './summary';
-import { datesToCheck, eventsReadStart, judgeDay, rewindCheckpoint, targetDate, toEventUpsert } from './sync-rules';
+import { datesToCheck, eventsReadStart, isSettled, judgeDay, rewindCheckpoint, targetDate, toEventUpsert } from './sync-rules';
 
 describe('targetDate', () => {
     it('includes today only after the closing prices are published', () => {
@@ -88,6 +88,13 @@ describe('judgeDay', () => {
     it('waits for a recent day on which one market has no prices yet, and accepts an old gap', () => {
         assert.equal(judgeDay(['twse', 'tpex'], ['twse'], '2026-11-23', '2026-11-24'), 'retry-later');
         assert.equal(judgeDay(['twse', 'tpex'], ['tpex'], '2015-06-01', '2026-11-24'), 'one-market');
+    });
+});
+
+describe('isSettled', () => {
+    it('treats days more than 7 days back as settled', () => {
+        assert.equal(isSettled('2026-11-17', '2026-11-24'), false);
+        assert.equal(isSettled('2026-11-16', '2026-11-24'), true);
     });
 });
 

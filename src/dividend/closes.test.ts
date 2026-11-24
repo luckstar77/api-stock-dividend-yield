@@ -1,10 +1,11 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { SourceFormatError } from '../sources/format';
 import { StockClose } from '../sources/twse';
 import { ClosesSource, readClosesOfDay } from './closes';
 import { Market } from './summary';
 
-type Answer = Map<string, StockClose> | null;
+type Answer = Map<string, StockClose> | null | SourceFormatError;
 
 const TODAY = '2026-11-24';
 const PRICES: Map<string, StockClose> = new Map([['2330', { name: '台積電', close: 1000 }]]);
@@ -18,6 +19,7 @@ function createSource(market: Market, firstDate: string, answers: Answer[]): Clo
         fetchCloses: async () => {
             const answer = answers[Math.min(source.calls, answers.length - 1)];
             source.calls++;
+            if(answer instanceof SourceFormatError) throw answer;
             return answer;
         },
     };
@@ -63,6 +65,31 @@ describe('readClosesOfDay', () => {
         assert.equal(recent.verdict, 'retry-later');
         assert.equal(old.verdict, 'one-market');
         assert.ok(old.closes.twse);
+    });
+
+    it('counts an unreadable page of an old day as no prices, after asking once more', async () => {
+        const mockTpex = createSource('tpex', '2007-07-02', [new SourceFormatError('odd page')]);
+
+        const actual = await readClosesOfDay([createSource('twse', '2004-02-11', [PRICES]), mockTpex], '2015-06-01', TODAY);
+
+        assert.equal(actual.verdict, 'one-market');
+        assert.deepEqual(actual.unreadable, ['tpex']);
+        assert.equal(mockTpex.calls, 2);
+    });
+
+    it('is satisfied when the page of an old day reads fine the second time', async () => {
+        const mockTwse = createSource('twse', '2004-02-11', [new SourceFormatError('odd page'), PRICES]);
+
+        const actual = await readClosesOfDay([mockTwse, createSource('tpex', '2007-07-02', [PRICES])], '2015-06-01', TODAY);
+
+        assert.equal(actual.verdict, 'trading');
+        assert.deepEqual(actual.unreadable, []);
+    });
+
+    it('throws on an unreadable page of a recent day, so a later run asks again', async () => {
+        const sources = [createSource('twse', '2004-02-11', [new SourceFormatError('odd page')]), createSource('tpex', '2007-07-02', [PRICES])];
+
+        await assert.rejects(readClosesOfDay(sources, '2026-11-23', TODAY), SourceFormatError);
     });
 
     it('does not ask a market for a day before its data starts', async () => {
