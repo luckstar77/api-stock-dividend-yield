@@ -58,7 +58,7 @@ function deriveSharesPerShare(preExClose: number, referencePrice: number, cashDi
 /**
  * 除權除息計算結果表 (TWT49U). Ex-dates on which shares were given out get their amounts from
  * {@link parseTwseDetail}, because the table does not tell a stock dividend from a capital increase paid for in cash.
- * Some ex-dates of 2004 and 2005 have no detail page; for those the amounts estimated from the table are used.
+ * The ex-dates of 2004, and a few of 2005, have no detail page; for those the amounts estimated from the table are used.
  */
 export function parseTwseEvents(json: unknown): DividendEvent[] {
     const response = asResponse(json);
