@@ -15,7 +15,7 @@ import { connect as mongodbConnect, disconnect as mongodbDisconnect } from './db
 import { connect as redisConnect, RedisClient } from './db/redis';
 import { ClosesSource, DayCloses, readClosesOfDay } from './dividend/closes';
 import { DividendAmount, DividendEvent, findFilledEvents, Market, summarizeDividends, TrackedDividendEvent } from './dividend/summary';
-import { datesToCheck, eventsReadStart, rewindCheckpoint, targetDate, toEventUpsert, trackUnreadableDays, UnreadableStreaks } from './dividend/sync-rules';
+import { datesToCheck, eventsReadStart, rewindCheckpoint, targetDate, toEventUpsert, toStockSummarySet, trackUnreadableDays, UnreadableStreaks } from './dividend/sync-rules';
 import { addDays, laterOf, SourceFormatError, taipeiNow, yearRanges } from './sources/format';
 import { describeError, RateLimitedClient } from './sources/rate-limited-client';
 import { fetchTpexCloses, fetchTpexEvents } from './sources/tpex';
@@ -254,11 +254,13 @@ async function publishSummaries(db: Db, context: SyncContext, { latest, checkedT
         }
         const summary = summarizeDividends(stockEvents);
         if(!summary) continue;
-        const name = latest?.twse.get(id)?.name ?? latest?.tpex.get(id)?.name ?? stockEvents[stockEvents.length - 1].name;
+        const close = latest?.twse.get(id) ?? latest?.tpex.get(id);
+        const name = close?.name ?? stockEvents[stockEvents.length - 1].name;
+        const latestClose = latest && close ? { date: latest.date, close: close.close } : undefined;
         operations.push({
             updateOne: {
                 filter: { id },
-                update: { $set: { name, ...summary, source: SOURCE, dataThrough: checkedThrough, updated: new Date() } },
+                update: { $set: toStockSummarySet({ name, summary, source: SOURCE, dataThrough: checkedThrough, updated: new Date(), latestClose }) },
                 upsert: true,
             },
         });

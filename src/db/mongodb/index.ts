@@ -1,7 +1,7 @@
 import { MongoClient } from 'mongodb';
 
-// Connection URL
-const url = 'mongodb://localhost:27017';
+// Connection URL. MONGODB_URL lets a local run use another server.
+const url = process.env.MONGODB_URL || 'mongodb://localhost:27017';
 // Fail fast instead of keeping a request waiting for 30 seconds when MongoDB is down.
 const SERVER_SELECTION_TIMEOUT_MS = 5000;
 const client = new MongoClient(url, { serverSelectionTimeoutMS: SERVER_SELECTION_TIMEOUT_MS });

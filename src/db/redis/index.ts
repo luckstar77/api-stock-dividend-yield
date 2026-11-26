@@ -15,8 +15,9 @@ export async function connect(options: { maxRetries?: number } = {}): Promise<Re
 
     // Without disableOfflineQueue, a command sent while Redis is down waits until it is back,
     // and the request that sent it never gets a response.
-    // REDIS_DATABASE lets a trial run of the sync write to another database number.
+    // REDIS_DATABASE lets a trial run of the sync write to another database number; REDIS_URL lets a local run use another server.
     const client = createClient({
+        url: process.env.REDIS_URL,
         disableOfflineQueue: true,
         database: Number(process.env.REDIS_DATABASE) || 0,
         socket: {

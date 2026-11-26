@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { DividendEvent } from './summary';
-import { datesToCheck, eventsReadStart, isSettled, judgeDay, rewindCheckpoint, targetDate, toEventUpsert, trackUnreadableDays, UnreadableStreaks } from './sync-rules';
+import { datesToCheck, eventsReadStart, isSettled, judgeDay, rewindCheckpoint, targetDate, toEventUpsert, toStockSummarySet, trackUnreadableDays, UnreadableStreaks } from './sync-rules';
 
 describe('targetDate', () => {
     it('includes today only after the closing prices are published', () => {
@@ -133,5 +133,32 @@ describe('rewindCheckpoint', () => {
         assert.equal(rewindCheckpoint('2026-11-23', ['2026-11-24']), '2026-11-23');
         assert.equal(rewindCheckpoint(undefined, ['2004-03-01']), undefined);
         assert.equal(rewindCheckpoint('2026-11-23', []), '2026-11-23');
+    });
+});
+
+describe('toStockSummarySet', () => {
+    const summary = {
+        successRate: 100,
+        allAvgCashYields: 3.2,
+        allAvgRetroactiveYields: 4.1,
+        amountOfDividend: 23,
+        amountOfSuccess: 23,
+        dividendYearStart: 2004,
+        dividendYearEnd: 2026,
+    };
+    const updated = new Date('2026-11-25T10:35:38.711Z');
+
+    it('adds the latest close and its day when the stock traded that day', () => {
+        const actual = toStockSummarySet({ name: '台積電', summary, source: 'twse-tpex', dataThrough: '2026-11-25', updated, latestClose: { date: '2026-11-25', close: 1450 } });
+
+        assert.deepEqual(actual, { name: '台積電', ...summary, source: 'twse-tpex', dataThrough: '2026-11-25', updated, lastClose: 1450, lastCloseDate: '2026-11-25' });
+    });
+
+    it('leaves the stored close alone when the latest day has no close for the stock', () => {
+        const actual = toStockSummarySet({ name: '台積電', summary, source: 'twse-tpex', dataThrough: '2026-11-25', updated });
+
+        assert.equal('lastClose' in actual, false);
+        assert.equal('lastCloseDate' in actual, false);
+        assert.deepEqual(actual, { name: '台積電', ...summary, source: 'twse-tpex', dataThrough: '2026-11-25', updated });
     });
 });
