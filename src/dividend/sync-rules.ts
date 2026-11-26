@@ -1,6 +1,6 @@
 import { AnyBulkWriteOperation } from 'mongodb';
 import { addDays, isSunday, laterOf } from '../sources/format';
-import { DividendEvent, Market, TrackedDividendEvent } from './summary';
+import { DividendEvent, DividendSummary, Market, TrackedDividendEvent } from './summary';
 
 /** Rules of build/sync.js that decide which days to read and how to save, kept apart so they can be tested. */
 
@@ -97,4 +97,31 @@ export function rewindCheckpoint(lastCloseDate: string | undefined, recheckDates
     if(!lastCloseDate || recheckDates.length === 0) return lastCloseDate;
     const earliest = recheckDates.reduce((first, date) => (date < first ? date : first));
     return earliest <= lastCloseDate ? addDays(earliest, -1) : lastCloseDate;
+}
+
+export interface LatestClose {
+    /** The trading day of the close, YYYY-MM-DD */
+    date: string;
+    close: number;
+}
+
+export interface StockSummaryInput {
+    name: string;
+    summary: DividendSummary;
+    source: string;
+    /** The last day whose closing prices were checked */
+    dataThrough: string | undefined;
+    updated: Date;
+    /** The stock's close on the latest day both markets traded; left out when that day has no close for it */
+    latestClose?: LatestClose;
+}
+
+/** The $set of a stock's summary in the stock collection, which the API answers from. */
+export function toStockSummarySet({ name, summary, source, dataThrough, updated, latestClose }: StockSummaryInput): Record<string, unknown> {
+    const set: Record<string, unknown> = { name, ...summary, source, dataThrough, updated };
+    if(latestClose) {
+        set.lastClose = latestClose.close;
+        set.lastCloseDate = latestClose.date;
+    }
+    return set;
 }
