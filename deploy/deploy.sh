@@ -14,6 +14,9 @@ set -euo pipefail
 APP_DIR="${APP_DIR:-$HOME/stock-dividend-yield/api-stock-dividend-yield}"
 DEPLOY_SHA="${DEPLOY_SHA:?DEPLOY_SHA is required}"
 DEPLOY_BRANCH="master"
+# The repository is public: fetching over HTTPS needs no GitHub credentials on the server
+# (its origin is an SSH URL, and the server has no key registered on GitHub).
+REPO_URL="${REPO_URL:-https://github.com/luckstar77/api-stock-dividend-yield.git}"
 PM2_APP="${PM2_APP:-stock}"
 NODE_VERSION="20"
 HEALTH_URL="http://127.0.0.1:${PORT:-3000}/v1/health"
@@ -68,7 +71,7 @@ main() {
     trap rollback EXIT
 
     log "$PREV -> $DEPLOY_SHA in $APP_DIR"
-    git fetch origin "$DEPLOY_BRANCH"
+    git fetch "$REPO_URL" "$DEPLOY_BRANCH"
     git merge --ff-only "$DEPLOY_SHA"
     MERGED=true
 
