@@ -32,12 +32,13 @@ fail() {
 PREV=""
 MERGED=false
 
+# shellcheck disable=SC2329 # run by the EXIT trap
 rollback() {
     local status=$?
     if [ "$status" -ne 0 ] && [ "$MERGED" = true ]; then
         set +e
         echo "[deploy] failed (exit $status); rolling back to $PREV" >&2
-        git reset --hard "$PREV" && npm ci && npm run build && "$PM2_BIN" restart "$PM2_APP"
+        git reset --hard "$PREV" && npm ci && rm -rf build && npm run build && "$PM2_BIN" restart "$PM2_APP"
         echo "[deploy] rollback finished (exit $?)" >&2
     fi
     exit "$status"
@@ -58,7 +59,9 @@ main() {
 
     cd "$APP_DIR"
     [ "$(git rev-parse --abbrev-ref HEAD)" = "$DEPLOY_BRANCH" ] || fail "$APP_DIR is not on $DEPLOY_BRANCH"
-    git diff --quiet && git diff --cached --quiet || fail "$APP_DIR has local changes; commit or discard them first"
+    if ! git diff --quiet || ! git diff --cached --quiet; then
+        fail "$APP_DIR has local changes; commit or discard them first"
+    fi
 
     PREV="$(git rev-parse HEAD)"
 
@@ -70,6 +73,8 @@ main() {
     MERGED=true
 
     npm ci
+    # tsc does not remove the output of deleted files, and npm test runs every *.test.js under build/
+    rm -rf build
     npm test
     "$PM2_BIN" restart "$PM2_APP"
 
