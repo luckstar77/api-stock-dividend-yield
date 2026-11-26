@@ -67,20 +67,20 @@ export function sharesPerShare(sharesPerThousand: number): number {
     return sharesPerThousand / SHARES_PER_LOT;
 }
 
-function isDividendKnown(event: DividendEvent): boolean {
+export function isDividendKnown(event: DividendEvent): boolean {
     return event.cashDividend !== null && event.stockDividendPerShare !== null;
 }
 
 /** A capital increase paid for in cash (現金增資) is also published as 除權, but it is not a dividend. */
-function isDividend(event: DividendEvent): boolean {
+export function isDividend(event: DividendEvent): boolean {
     return (event.cashDividend ?? 0) > 0 || (event.stockDividendPerShare ?? 0) > 0;
 }
 
-function cashYield(event: DividendEvent): number {
+export function cashYield(event: DividendEvent): number {
     return (event.cashDividend ?? 0) / event.preExClose;
 }
 
-function retroactiveYield(event: DividendEvent): number {
+export function retroactiveYield(event: DividendEvent): number {
     const stockValue = (event.stockDividendPerShare ?? 0) * event.referencePrice;
     return ((event.cashDividend ?? 0) + stockValue) / event.preExClose;
 }
